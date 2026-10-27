@@ -45,6 +45,13 @@ namespace OMTK
             get { return State == EnemyState.Stagger; }
         }
 
+        public bool IsResonanceLocked { get; private set; }
+
+        public float LockProgress
+        {
+            get { return lockProgress; }
+        }
+
         public bool AtTarget
         {
             get { return State == EnemyState.Approach && Distance <= 3.05f; }
@@ -69,6 +76,7 @@ namespace OMTK
         private float recoverRemaining;
         private bool foresightCue;
         private float presenceTarget;
+        private float lockProgress;
         private const float ApproachDistance = 2.35f;
 
         public OMTKEnemy(OMTKGame owner, OMTKAudio audioSystem, EnemyVariant variant, float azimuth, int index)
@@ -166,8 +174,33 @@ namespace OMTK
                 }
             }
 
+            UpdateResonanceLock(deltaTime, playerYaw);
             presence.volume = Mathf.MoveTowards(presence.volume, presenceTarget, deltaTime * 2.4f);
             UpdateSpatial(playerYaw);
+        }
+
+        private void UpdateResonanceLock(float deltaTime, float playerYaw)
+        {
+            float angle = Mathf.Abs(Mathf.DeltaAngle(playerYaw, Azimuth));
+            if (angle <= OMTKConfig.StandardParryAngle)
+            {
+                if (IsResonanceLocked)
+                {
+                    return;
+                }
+
+                lockProgress += deltaTime;
+                if (lockProgress >= OMTKConfig.ResonanceLockDuration)
+                {
+                    IsResonanceLocked = true;
+                    audio.PlayAt(audio.Lock(Variant), Position, 0.52f);
+                }
+            }
+            else
+            {
+                IsResonanceLocked = false;
+                lockProgress = 0f;
+            }
         }
 
         public bool BeginWindup()
@@ -219,6 +252,21 @@ namespace OMTK
                 presenceTarget = 0.22f;
             }
 
+            return true;
+        }
+
+        public bool ShoveAway()
+        {
+            if (State != EnemyState.Stagger)
+            {
+                return false;
+            }
+
+            State = EnemyState.Recover;
+            recoverRemaining = 0.5f;
+            Distance = 7.4f;
+            targetDistance = 7.4f;
+            presenceTarget = 0.2f;
             return true;
         }
 

@@ -82,6 +82,7 @@ namespace OMTK
         private bool echoAnnounced;
         private bool gyroEnabled;
         private bool pointerHeld;
+        private bool pointerSwipeDetected;
         private Vector2 pointerStart;
         private Vector2 pointerLast;
         private float pointerDownTime;
@@ -478,11 +479,7 @@ namespace OMTK
 
                 if (token.WindupRemaining > OMTKConfig.StandardParryWindow)
                 {
-                    guardLockout = OMTKConfig.GuardLockoutDuration;
-                    PulseHaptic();
-                    Audio.PlayTinnitus();
-                    ShowSubtitle("Too soon. Your guard is open.", 1f);
-                    promptText.text = "WAIT";
+                    TriggerPrematureTap();
                     return;
                 }
 
@@ -491,14 +488,17 @@ namespace OMTK
                 {
                     grade = ParryGrade.Glancing;
                 }
-                else if (angle <= PerfectParryAngle && token.WindupRemaining <= PerfectWindow)
+                else if (angle <= PerfectParryAngle && token.WindupRemaining <= PerfectWindow && token.IsResonanceLocked)
                 {
                     grade = ParryGrade.Perfect;
                 }
 
                 token.Parry(grade);
                 token = null;
-                windupCooldown = narratorMode == 0 ? 1.3f : 0.9f;
+                float baseCooldown = narratorMode == 0 ? 1.3f : 0.9f;
+                windupCooldown = grade == ParryGrade.Standard
+                    ? baseCooldown * OMTKConfig.StandardParryCooldownScale
+                    : baseCooldown;
 
                 if (grade == ParryGrade.Perfect)
                 {
@@ -530,14 +530,39 @@ namespace OMTK
             OMTKEnemy staggered = FindStaggered();
             if (staggered != null)
             {
-                Audio.Play2D(Audio.WhiffClip, 0.3f);
-                ShowSubtitle("Swipe to strike the opening.", 0.8f);
-                promptText.text = "SWIPE";
+                if (staggered.ShoveAway())
+                {
+                    Audio.Play2D(Audio.WhiffClip, 0.42f, 0.86f);
+                    ShowSubtitle("Shoved back. Swipe to finish.", 0.9f);
+                    promptText.text = "SWIPE";
+                    windupCooldown = 0.95f;
+                }
+
+                return;
+            }
+
+            if (HasLiveEnemy())
+            {
+                TriggerPrematureTap();
                 return;
             }
 
             Audio.Play2D(Audio.WhiffClip, 0.4f);
             ShowSubtitle("Nothing there.", 0.65f);
+        }
+
+        private void TriggerPrematureTap()
+        {
+            if (guardLockout > 0f)
+            {
+                return;
+            }
+
+            guardLockout = OMTKConfig.GuardLockoutDuration;
+            PulseHaptic();
+            Audio.PlayTinnitus();
+            ShowSubtitle("Too soon. Your guard is open.", 1f);
+            promptText.text = "WAIT";
         }
 
         private void TrySlash()
@@ -606,6 +631,19 @@ namespace OMTK
             }
 
             return null;
+        }
+
+        private bool HasLiveEnemy()
+        {
+            for (int i = 0; i < enemies.Count; i++)
+            {
+                if (enemies[i].IsAlive)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void Victory()
@@ -764,6 +802,7 @@ namespace OMTK
             if (down)
             {
                 pointerHeld = true;
+                pointerSwipeDetected = false;
                 pointerStart = position;
                 pointerLast = position;
                 pointerDownTime = 0f;
@@ -776,8 +815,20 @@ namespace OMTK
                 float deltaX = position.x - pointerLast.x;
                 if (Mathf.Abs(deltaX) > 0.01f)
                 {
-                    PlayerYaw += deltaX * 0.18f;
                     pointerTravel += Mathf.Abs(deltaX);
+                    float velocity = Mathf.Abs(deltaX) / Mathf.Max(0.0001f, deltaTime);
+                    bool swipeGesture = velocity >= OMTKConfig.SwipeVelocityThreshold
+                        || (Mathf.Abs(position.x - pointerStart.x) >= OMTKConfig.SwipeDistanceThreshold && pointerDownTime < 0.48f);
+                    if (swipeGesture)
+                    {
+                        pointerSwipeDetected = true;
+                    }
+
+                    bool canTurn = !pointerSwipeDetected && FindStaggered() == null;
+                    if (canTurn && Mathf.Abs(position.x - pointerStart.x) > OMTKConfig.TouchDeadZone)
+                    {
+                        PlayerYaw += deltaX * 0.18f;
+                    }
                 }
 
                 pointerLast = position;
@@ -786,6 +837,7 @@ namespace OMTK
             if (up && pointerHeld)
             {
                 pointerHeld = false;
+                pointerSwipeDetected = false;
                 Vector2 delta = position - pointerStart;
                 if (State == GameState.Title && pointerTravel < 18f && delta.magnitude < 45f && pointerDownTime >= 0.75f)
                 {
@@ -797,7 +849,7 @@ namespace OMTK
                 {
                     HandleTap();
                 }
-                else if (Mathf.Abs(delta.x) > 90f && Mathf.Abs(delta.y) < 90f && pointerDownTime < 0.48f)
+                else if (Mathf.Abs(delta.x) > OMTKConfig.SwipeDistanceThreshold && Mathf.Abs(delta.y) < OMTKConfig.SwipeDistanceThreshold && pointerDownTime < 0.48f)
                 {
                     HandleSwipe();
                 }

@@ -340,6 +340,34 @@ namespace OMTK
             return Make("off_axis", data);
         }
 
+        public static AudioClip ResonanceLock(EnemyVariant variant)
+        {
+            float[] data = Buffer(0.28f);
+            if (variant == EnemyVariant.Stalker)
+            {
+                AddTone(data, 720f, 0f, 0.26f, 0.1f, Wave.Sine, 0.006f, 0.24f);
+                AddTone(data, 1080f, 0.02f, 0.22f, 0.06f, Wave.Sine, 0.006f, 0.2f);
+                AddTone(data, 1440f, 0.04f, 0.18f, 0.035f, Wave.Sine, 0.006f, 0.16f);
+            }
+            else if (variant == EnemyVariant.Charger)
+            {
+                AddTone(data, 330f, 0f, 0.26f, 0.11f, Wave.Triangle, 0.006f, 0.24f);
+                AddTone(data, 660f, 0.02f, 0.22f, 0.07f, Wave.Sine, 0.006f, 0.2f);
+                AddTone(data, 990f, 0.04f, 0.18f, 0.04f, Wave.Sine, 0.006f, 0.16f);
+            }
+            else
+            {
+                AddTone(data, 980f, 0f, 0.26f, 0.1f, Wave.Sine, 0.006f, 0.24f);
+                AddTone(data, 1470f, 0.02f, 0.22f, 0.06f, Wave.Sine, 0.006f, 0.2f);
+                AddTone(data, 1960f, 0.04f, 0.18f, 0.035f, Wave.Sine, 0.006f, 0.16f);
+            }
+
+            AddFilteredNoise(data, 0f, 0.08f, 0.025f, 4200f, 0.7f);
+            Normalize(data, 0.5f);
+            FadeEdges(data, 0.006f);
+            return Make("resonance_lock_" + variant, data);
+        }
+
         private static float Midi(int note)
         {
             return 440f * Mathf.Pow(2f, (note - 69) / 12f);

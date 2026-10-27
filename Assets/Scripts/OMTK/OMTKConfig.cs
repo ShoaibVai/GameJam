@@ -29,10 +29,15 @@ namespace OMTK
         public const float StandardParryAngle = 35f;
         public const float GlancingDeflectAngle = 40f;
         public const float StandardParryWindow = 0.35f;
+        public const float StandardParryCooldownScale = 0.7f;
+        public const float ResonanceLockDuration = 0.3f;
         public const float GuardLockoutDuration = 0.45f;
         public const float TinnitusFrequency = 900f;
         public const float TinnitusDuration = 0.8f;
         public const float PerfectStaggerDuration = 1.2f;
+        public const float TouchDeadZone = 8f;
+        public const float SwipeDistanceThreshold = 90f;
+        public const float SwipeVelocityThreshold = 800f;
         public const int BaseMaxHp = 3;
         public const float RunIntroDuration = 3.4f;
         public const float FinaleTurnWindow = 35f;

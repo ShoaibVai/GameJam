@@ -47,6 +47,9 @@ namespace OMTK
         public AudioClip TinnitusClip { get; private set; }
         public AudioClip GlanceClip { get; private set; }
         public AudioClip OffAxisClip { get; private set; }
+        public AudioClip LockStalkerClip { get; private set; }
+        public AudioClip LockChargerClip { get; private set; }
+        public AudioClip LockConjurerClip { get; private set; }
 
         public void Init(GameObject owner)
         {
@@ -86,6 +89,9 @@ namespace OMTK
             TinnitusClip = AudioSynth.Tinnitus();
             GlanceClip = AudioSynth.Glance();
             OffAxisClip = AudioSynth.OffAxis();
+            LockStalkerClip = AudioSynth.ResonanceLock(EnemyVariant.Stalker);
+            LockChargerClip = AudioSynth.ResonanceLock(EnemyVariant.Charger);
+            LockConjurerClip = AudioSynth.ResonanceLock(EnemyVariant.Conjurer);
         }
 
         public AudioClip Windup(EnemyVariant variant)
@@ -96,6 +102,11 @@ namespace OMTK
         public AudioClip Presence(EnemyVariant variant)
         {
             return variant == EnemyVariant.Charger ? PresenceCharger : variant == EnemyVariant.Conjurer ? PresenceConjurer : PresenceStalker;
+        }
+
+        public AudioClip Lock(EnemyVariant variant)
+        {
+            return variant == EnemyVariant.Charger ? LockChargerClip : variant == EnemyVariant.Conjurer ? LockConjurerClip : LockStalkerClip;
         }
 
         public void Tick()
