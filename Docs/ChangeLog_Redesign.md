@@ -63,3 +63,22 @@ This log records implementation work against the acoustic redesign specification
 - **Playtests:** Not yet added; lock acquisition and perfect-parry enforcement are scheduled for Tier 4.
 - **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
 - **Deviations/deferred work:** Lock behavior has not yet been verified on a device or in play mode.
+
+## Tier 1.4 — Opt-In Radar Assistance
+
+- **Status:** Implemented; playtest verification pending.
+- **Behavior implemented:**
+  - Directional radar now defaults to off and is persisted with `PlayerPrefs` key `OMTK_RadarAssist`.
+  - When off, the radar dial, cardinal labels, heading readout, enemy blips, attack-timing blips, and radar pings are not drawn or played. The non-directional resonance ring remains visible.
+  - When on, the existing directional radar and radar pings are restored.
+  - The title options menu now supports row navigation: tap changes the selected row, swipe moves to the next row, and two-finger tap closes the menu.
+  - Added a persisted `RADAR ASSIST: ON/OFF` row with subtitle and narrator feedback.
+  - Removed the off-axis finisher subtitle that disclosed that the opening was behind the player.
+- **Files changed:** `Assets/Scripts/OMTK/OMTKConfig.cs`, `Assets/Scripts/OMTK/OMTKGame.cs`.
+- **Configuration added:**
+  - `OMTKConfig.RadarAssist = false`
+  - `RadarAssistKey = "OMTK_RadarAssist"`
+  - Options rows now include narrator, haptics, and radar assist.
+- **Playtests:** Radar-off invisibility, radar persistence, and resonance-ring independence are scheduled for Tier 4.
+- **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
+- **Deviations/deferred work:** The options menu uses tap-to-change and swipe-to-navigate rather than the previous fixed tap/swipe actions. This is required to expose more than two settings without adding new gestures. Radar behavior has not yet been verified in play mode.

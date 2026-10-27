@@ -63,6 +63,7 @@ namespace OMTK
         private Image[] radarBlipCores;
         private Image[] radarBlipGlows;
         private float radarPingTimer;
+        private bool radarVisible = true;
         private Text statusText;
         private Text titleText;
         private Text subtitleText;
@@ -97,12 +98,15 @@ namespace OMTK
         private bool hapticsEnabled;
         private bool optionsOpen;
         private bool twoFingerActive;
+        private int optionsIndex;
 
         private const string DeathsKey = "OMTK_Deaths";
         private const string BestWaveKey = "OMTK_BestWave";
         private const string EchoKey = "OMTK_EchoMask";
         private const string NarratorKey = "OMTK_NarratorMode";
         private const string HapticsKey = "OMTK_Haptics";
+        private const string RadarAssistKey = "OMTK_RadarAssist";
+        private const int OptionsCount = 3;
         private const string BootLine = "One More Time, Knight. Tap once to begin. Hold to open options. Turn your head to listen. Tap to parry. Swipe to answer.";
         private const int RadarBlipCount = 4;
 
@@ -594,7 +598,7 @@ namespace OMTK
             if (angle > OMTKConfig.StandardParryAngle)
             {
                 Audio.Play2D(Audio.OffAxisClip, 0.5f);
-                ShowSubtitle("The opening is behind you.", 0.95f);
+                ShowSubtitle("Not aligned. Face the sound.", 0.95f);
                 promptText.text = "TURN";
                 return false;
             }
@@ -881,6 +885,7 @@ namespace OMTK
         {
             narratorMode = Mathf.Clamp(PlayerPrefs.GetInt(NarratorKey, 0), 0, 2);
             hapticsEnabled = PlayerPrefs.GetInt(HapticsKey, 1) == 1;
+            OMTKConfig.RadarAssist = PlayerPrefs.GetInt(RadarAssistKey, OMTKConfig.RadarAssist ? 1 : 0) == 1;
         }
 
         private void ToggleOptions()
@@ -903,14 +908,38 @@ namespace OMTK
 
         private void OpenOptions()
         {
+            optionsIndex = 0;
             titleText.text = "OPTIONS";
             titleText.gameObject.SetActive(true);
             subtitleText.text = OptionsText();
             subtitleText.color = new Color(1f, 0.9f, 0.58f, 1f);
             subtitleUntil = 999f;
-            promptText.text = "HOLD OR TWO-FINGER TAP TO CLOSE";
+            promptText.text = "TAP: CHANGE   SWIPE: NEXT   TWO-FINGER TAP: CLOSE";
             statusText.text = "ACCESSIBILITY";
             Audio.Speak(OptionsSpeech());
+        }
+
+        private void MoveOptionsRow()
+        {
+            optionsIndex = (optionsIndex + 1) % OptionsCount;
+            subtitleText.text = OptionsText();
+            Audio.Speak(OptionsRowSpeech());
+        }
+
+        private void AdjustOptionsRow()
+        {
+            if (optionsIndex == 0)
+            {
+                CycleNarrator();
+            }
+            else if (optionsIndex == 1)
+            {
+                ToggleHaptics();
+            }
+            else
+            {
+                ToggleRadar();
+            }
         }
 
         private void CloseOptions()
@@ -951,14 +980,48 @@ namespace OMTK
             Audio.Speak("Haptics " + (hapticsEnabled ? "on." : "off."));
         }
 
+        private void ToggleRadar()
+        {
+            OMTKConfig.RadarAssist = !OMTKConfig.RadarAssist;
+            PlayerPrefs.SetInt(RadarAssistKey, OMTKConfig.RadarAssist ? 1 : 0);
+            PlayerPrefs.Save();
+            SetRadarVisible(OMTKConfig.RadarAssist);
+            subtitleText.text = OptionsText();
+            Audio.Speak("Radar assist " + (OMTKConfig.RadarAssist ? "on." : "off."));
+        }
+
         private string OptionsText()
         {
-            return "NARRATOR: " + NarratorName() + "\nHAPTICS: " + (hapticsEnabled ? "ON" : "OFF") + "\nTAP: NARRATOR\nSWIPE: HAPTICS";
+            string narrator = "NARRATOR: " + NarratorName();
+            string haptics = "HAPTICS: " + (hapticsEnabled ? "ON" : "OFF");
+            string radar = "RADAR ASSIST: " + (OMTKConfig.RadarAssist ? "ON" : "OFF");
+            string[] rows = { narrator, haptics, radar };
+            for (int i = 0; i < rows.Length; i++)
+            {
+                rows[i] = (i == optionsIndex ? "> " : "  ") + rows[i];
+            }
+
+            return rows[0] + "\n" + rows[1] + "\n" + rows[2] + "\nTAP: CHANGE   SWIPE: NEXT";
         }
 
         private string OptionsSpeech()
         {
-            return "Options. Narrator " + NarratorName().ToLowerInvariant() + ". Haptics " + (hapticsEnabled ? "on" : "off") + ". Tap to change narrator. Swipe to toggle haptics. Hold or two-finger tap to close.";
+            return "Options. " + OptionsRowSpeech() + " Tap to change. Swipe for next option. Hold or two-finger tap to close.";
+        }
+
+        private string OptionsRowSpeech()
+        {
+            if (optionsIndex == 0)
+            {
+                return "Narrator " + NarratorName().ToLowerInvariant() + ".";
+            }
+
+            if (optionsIndex == 1)
+            {
+                return "Haptics " + (hapticsEnabled ? "on." : "off.");
+            }
+
+            return "Radar assist " + (OMTKConfig.RadarAssist ? "on." : "off.") + ".";
         }
 
         private string NarratorName()
@@ -994,7 +1057,7 @@ namespace OMTK
             {
                 if (optionsOpen)
                 {
-                    CycleNarrator();
+                    AdjustOptionsRow();
                     return;
                 }
 
@@ -1032,7 +1095,7 @@ namespace OMTK
             {
                 if (optionsOpen)
                 {
-                    ToggleHaptics();
+                    MoveOptionsRow();
                     return;
                 }
 
@@ -1146,6 +1209,12 @@ namespace OMTK
                 return;
             }
 
+            SetRadarVisible(OMTKConfig.RadarAssist);
+            if (!OMTKConfig.RadarAssist)
+            {
+                return;
+            }
+
             bool active = State == GameState.Playing || State == GameState.Finale || State == GameState.Death;
             Color dialColor = State == GameState.Finale
                 ? new Color(1f, 0.56f, 0.38f, active ? 0.28f : 0.1f)
@@ -1205,6 +1274,43 @@ namespace OMTK
             }
 
             UpdateRadarAudio(deltaTime);
+        }
+
+        private void SetRadarVisible(bool visible)
+        {
+            if (radarDial == null || radarVisible == visible)
+            {
+                return;
+            }
+
+            radarVisible = visible;
+            radarDial.gameObject.SetActive(visible);
+            if (radarReadout != null)
+            {
+                radarReadout.gameObject.SetActive(visible);
+            }
+
+            if (radarLabels != null)
+            {
+                for (int i = 0; i < radarLabels.Length; i++)
+                {
+                    if (radarLabels[i] != null)
+                    {
+                        radarLabels[i].gameObject.SetActive(visible);
+                    }
+                }
+            }
+
+            if (radarBlipRoots != null)
+            {
+                for (int i = 0; i < radarBlipRoots.Length; i++)
+                {
+                    if (radarBlipRoots[i] != null && !visible)
+                    {
+                        radarBlipRoots[i].gameObject.SetActive(false);
+                    }
+                }
+            }
         }
 
         private void UpdateRadarAudio(float deltaTime)
@@ -1515,6 +1621,7 @@ namespace OMTK
             CenterRect(radarReadout.rectTransform);
             radarReadout.rectTransform.sizeDelta = new Vector2(240f, 40f);
             radarReadout.text = "HDG 000°";
+            SetRadarVisible(OMTKConfig.RadarAssist);
 
             statusText = CreateText("Status", canvasObject.transform, 32, new Color(0.78f, 0.84f, 0.9f, 0.86f), TextAnchor.UpperLeft);
             statusText.rectTransform.anchorMin = new Vector2(0f, 1f);

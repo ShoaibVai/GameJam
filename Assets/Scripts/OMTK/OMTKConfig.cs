@@ -19,6 +19,8 @@ namespace OMTK
 
     public static class OMTKConfig
     {
+        public static bool RadarAssist = false;
+
         public const string ProductName = "One More Time, Knight";
         public const string ApplicationIdentifier = "com.shoaib.onemoretimeknight";
         public const int SampleRate = 44100;
