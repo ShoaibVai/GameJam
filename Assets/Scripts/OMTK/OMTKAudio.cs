@@ -9,13 +9,19 @@ namespace OMTK
         private AudioSource voice;
         private AudioSource effects;
         private AudioSource conductor;
+        private AudioSource tinnitus;
+        private AudioLowPassFilter musicFilter;
+        private AudioLowPassFilter voiceFilter;
+        private AudioLowPassFilter effectsFilter;
         private AudioLowPassFilter conductorFilter;
         private GameObject host;
         private float musicLevel = 0.2f;
         private float duckCurrent = 1f;
         private float duckTarget = 1f;
+        private float tinnitusRemaining;
         private OMTKSystemTts systemTts;
         private int narratorMode;
+        private const float OpenCutoff = 22000f;
         private readonly Dictionary<string, AudioClip> voiceCache = new Dictionary<string, AudioClip>();
 
         public AudioClip WindupStalker { get; private set; }
@@ -38,6 +44,9 @@ namespace OMTK
         public AudioClip TickClip { get; private set; }
         public AudioClip ConductorReadyClip { get; private set; }
         public AudioClip RadarPingClip { get; private set; }
+        public AudioClip TinnitusClip { get; private set; }
+        public AudioClip GlanceClip { get; private set; }
+        public AudioClip OffAxisClip { get; private set; }
 
         public void Init(GameObject owner)
         {
@@ -45,6 +54,10 @@ namespace OMTK
             music = CreateSource("Music", false);
             voice = CreateSource("Voice", false);
             effects = CreateSource("Effects", false);
+            tinnitus = CreateSource("Tinnitus", false);
+            musicFilter = AddLowPass(music);
+            voiceFilter = AddLowPass(voice);
+            effectsFilter = AddLowPass(effects);
             music.clip = AudioSynth.Drone();
             music.loop = true;
             music.volume = musicLevel;
@@ -70,6 +83,9 @@ namespace OMTK
             TickClip = AudioSynth.Tick();
             ConductorReadyClip = AudioSynth.ConductorReady();
             RadarPingClip = AudioSynth.RadarPing();
+            TinnitusClip = AudioSynth.Tinnitus();
+            GlanceClip = AudioSynth.Glance();
+            OffAxisClip = AudioSynth.OffAxis();
         }
 
         public AudioClip Windup(EnemyVariant variant)
@@ -89,6 +105,15 @@ namespace OMTK
             {
                 music.volume = musicLevel * duckCurrent;
             }
+
+            if (tinnitusRemaining > 0f)
+            {
+                tinnitusRemaining -= Time.unscaledDeltaTime;
+                if (tinnitusRemaining <= 0f)
+                {
+                    SetMasterCutoff(OpenCutoff);
+                }
+            }
         }
 
         public void Duck(float level)
@@ -99,6 +124,31 @@ namespace OMTK
         public void Unduck()
         {
             duckTarget = 1f;
+        }
+
+        public void PlayTinnitus()
+        {
+            tinnitusRemaining = OMTKConfig.TinnitusDuration;
+            SetMasterCutoff(OMTKConfig.TinnitusFrequency);
+            if (tinnitus == null || TinnitusClip == null)
+            {
+                return;
+            }
+
+            tinnitus.Stop();
+            tinnitus.clip = TinnitusClip;
+            tinnitus.volume = 0.62f;
+            tinnitus.Play();
+        }
+
+        public void StopTinnitus()
+        {
+            tinnitusRemaining = 0f;
+            SetMasterCutoff(OpenCutoff);
+            if (tinnitus != null)
+            {
+                tinnitus.Stop();
+            }
         }
 
         public void PlayMusic()
@@ -265,6 +315,32 @@ namespace OMTK
                 conductor = null;
                 conductorFilter = null;
             }
+        }
+
+        private void SetMasterCutoff(float cutoff)
+        {
+            if (musicFilter != null)
+            {
+                musicFilter.cutoffFrequency = cutoff;
+            }
+
+            if (voiceFilter != null)
+            {
+                voiceFilter.cutoffFrequency = cutoff;
+            }
+
+            if (effectsFilter != null)
+            {
+                effectsFilter.cutoffFrequency = cutoff;
+            }
+        }
+
+        private AudioLowPassFilter AddLowPass(AudioSource source)
+        {
+            AudioLowPassFilter filter = source.gameObject.AddComponent<AudioLowPassFilter>();
+            filter.cutoffFrequency = OpenCutoff;
+            filter.lowpassResonanceQ = 0.7f;
+            return filter;
         }
 
         private AudioSource CreateSource(string name, bool spatial)

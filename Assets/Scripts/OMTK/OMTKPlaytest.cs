@@ -118,6 +118,7 @@ namespace OMTK
             {
                 if (token.WindupRemaining <= game.PerfectWindow)
                 {
+                    SetYaw(token.Azimuth);
                     Tap("perfect@" + token.WindupRemaining.ToString("F3"));
                 }
 
@@ -127,6 +128,7 @@ namespace OMTK
             OMTKEnemy staggered = FindStaggered();
             if (staggered != null)
             {
+                SetYaw(staggered.Azimuth);
                 game.SendMessage("HandleSwipe");
                 Debug.Log("[PLAYTEST] slash staggered " + staggered.Variant);
             }
@@ -152,6 +154,14 @@ namespace OMTK
         {
             game.SendMessage("HandleTap");
             Debug.Log("[PLAYTEST] tap " + reason);
+        }
+
+        private void SetYaw(float yaw)
+        {
+            if (playerYawField != null)
+            {
+                playerYawField.SetValue(game, Mathf.Repeat(yaw, 360f));
+            }
         }
 
         private OMTKEnemy GetToken()

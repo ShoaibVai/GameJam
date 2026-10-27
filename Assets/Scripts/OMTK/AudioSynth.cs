@@ -306,6 +306,40 @@ namespace OMTK
             return Make("radar_ping", data);
         }
 
+        public static AudioClip Tinnitus()
+        {
+            float duration = OMTKConfig.TinnitusDuration;
+            float[] data = Buffer(duration);
+            AddTone(data, OMTKConfig.TinnitusFrequency, 0f, duration, 0.16f, Wave.Sine, 0.018f, 0.24f);
+            AddTone(data, OMTKConfig.TinnitusFrequency * 1.006f, 0f, duration, 0.08f, Wave.Sine, 0.02f, 0.24f);
+            AddTone(data, OMTKConfig.TinnitusFrequency * 2f, 0f, duration, 0.055f, Wave.Sine, 0.024f, 0.28f);
+            AddTone(data, OMTKConfig.TinnitusFrequency * 3f, 0f, duration * 0.72f, 0.025f, Wave.Sine, 0.03f, 0.24f);
+            Normalize(data, 0.56f);
+            FadeEdges(data, 0.02f);
+            return Make("tinnitus", data);
+        }
+
+        public static AudioClip Glance()
+        {
+            float[] data = Buffer(0.3f);
+            AddSweep(data, 2300f, 620f, 0f, 0.27f, 0.16f, Wave.Triangle, 0.003f, 0.2f, 24f, 0.04f);
+            AddTone(data, 380f, 0f, 0.18f, 0.11f, Wave.Sine, 0.003f, 0.14f);
+            AddFilteredNoise(data, 0f, 0.16f, 0.1f, 3400f, 0.28f);
+            Normalize(data, 0.66f);
+            FadeEdges(data, 0.006f);
+            return Make("glance", data);
+        }
+
+        public static AudioClip OffAxis()
+        {
+            float[] data = Buffer(0.22f);
+            AddFilteredNoise(data, 0f, 0.2f, 0.12f, 760f, 0.2f);
+            AddSweep(data, 720f, 240f, 0f, 0.2f, 0.06f, Wave.Triangle, 0.004f, 0.16f);
+            Normalize(data, 0.46f);
+            FadeEdges(data, 0.008f);
+            return Make("off_axis", data);
+        }
+
         private static float Midi(int note)
         {
             return 440f * Mathf.Pow(2f, (note - 69) / 12f);

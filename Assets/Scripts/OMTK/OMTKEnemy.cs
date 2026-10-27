@@ -11,6 +11,13 @@ namespace OMTK
         Dead
     }
 
+    public enum ParryGrade
+    {
+        Perfect,
+        Standard,
+        Glancing
+    }
+
     public class OMTKEnemy
     {
         public EnemyVariant Variant { get; private set; }
@@ -181,7 +188,7 @@ namespace OMTK
             return true;
         }
 
-        public bool Parry(bool perfect)
+        public bool Parry(ParryGrade grade)
         {
             if (State != EnemyState.Windup)
             {
@@ -189,12 +196,20 @@ namespace OMTK
             }
 
             source.Stop();
-            if (perfect)
+            if (grade == ParryGrade.Perfect)
             {
                 State = EnemyState.Stagger;
-                StaggerRemaining = 1.2f;
+                StaggerRemaining = OMTKConfig.PerfectStaggerDuration;
                 presenceTarget = 0.12f;
                 audio.PlayAt(audio.StaggerClip, Position, 0.75f);
+            }
+            else if (grade == ParryGrade.Glancing)
+            {
+                State = EnemyState.Recover;
+                recoverRemaining = 0.34f;
+                targetDistance = 7.6f;
+                presenceTarget = 0.2f;
+                audio.PlayAt(audio.GlanceClip, Position, 0.72f);
             }
             else
             {

@@ -42,6 +42,16 @@ namespace OMTK
             get { return HasEcho(EchoId.Grace) ? OMTKConfig.GracePerfectWindow : OMTKConfig.PerfectWindow; }
         }
 
+        public float PerfectParryAngle
+        {
+            get { return HasEcho(EchoId.Grace) ? OMTKConfig.GracePerfectParryAngle : OMTKConfig.PerfectParryAngle; }
+        }
+
+        public float GuardLockoutRemaining
+        {
+            get { return guardLockout; }
+        }
+
         private readonly List<OMTKEnemy> enemies = new List<OMTKEnemy>();
         private readonly float[] audioSamples = new float[256];
         private Camera mainCamera;
@@ -60,6 +70,7 @@ namespace OMTK
         private Font uiFont;
         private OMTKEnemy token;
         private float windupCooldown;
+        private float guardLockout;
         private float introDuration;
         private float interludeDuration;
         private float subtitleUntil;
@@ -159,6 +170,7 @@ namespace OMTK
 
             Audio.Tick();
             StateTime += deltaTime;
+            guardLockout = Mathf.Max(0f, guardLockout - deltaTime);
             UpdateInput(deltaTime);
 
             if (State == GameState.Intro && StateTime >= introDuration)
@@ -276,7 +288,9 @@ namespace OMTK
             Attempt = 1;
             Wave = 1;
             Hp = MaxHp;
+            guardLockout = 0f;
             ClearEnemies();
+            Audio.StopTinnitus();
             Audio.Unduck();
             Audio.PlayMusic();
             Audio.StopConductor();
@@ -292,7 +306,9 @@ namespace OMTK
             Attempt++;
             Wave = 1;
             Hp = MaxHp;
+            guardLockout = 0f;
             ClearEnemies();
+            Audio.StopTinnitus();
             Audio.Unduck();
             Audio.PlayMusic();
             Audio.StopConductor();
@@ -307,6 +323,7 @@ namespace OMTK
         {
             Wave = wave;
             Hp = Mathf.Min(MaxHp, Hp + (wave > 1 ? 1 : 0));
+            guardLockout = 0f;
             ClearEnemies();
             windupCooldown = narratorMode == 0 ? 2.55f : 1.65f;
             SetState(GameState.Playing);
@@ -390,8 +407,10 @@ namespace OMTK
             }
 
             echoAnnounced = false;
+            guardLockout = 0f;
             damageFlash = 1f;
             PulseHaptic();
+            Audio.StopTinnitus();
             fatalClip = killer.WindupClip;
             fatalPosition = killer.Position;
             fatalReplayPlayed = false;
@@ -441,14 +460,47 @@ namespace OMTK
                 return;
             }
 
+            if (guardLockout > 0f)
+            {
+                return;
+            }
+
             if (token != null && token.IsWindingUp)
             {
-                bool perfect = token.WindupRemaining <= PerfectWindow;
-                token.Parry(perfect);
+                float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, token.Azimuth));
+                if (angle > OMTKConfig.GlancingDeflectAngle)
+                {
+                    Audio.Play2D(Audio.OffAxisClip, 0.5f);
+                    ShowSubtitle("Wide. Face the sound.", 0.9f);
+                    promptText.text = "TURN";
+                    return;
+                }
+
+                if (token.WindupRemaining > OMTKConfig.StandardParryWindow)
+                {
+                    guardLockout = OMTKConfig.GuardLockoutDuration;
+                    PulseHaptic();
+                    Audio.PlayTinnitus();
+                    ShowSubtitle("Too soon. Your guard is open.", 1f);
+                    promptText.text = "WAIT";
+                    return;
+                }
+
+                ParryGrade grade = ParryGrade.Standard;
+                if (angle > OMTKConfig.StandardParryAngle)
+                {
+                    grade = ParryGrade.Glancing;
+                }
+                else if (angle <= PerfectParryAngle && token.WindupRemaining <= PerfectWindow)
+                {
+                    grade = ParryGrade.Perfect;
+                }
+
+                token.Parry(grade);
                 token = null;
                 windupCooldown = narratorMode == 0 ? 1.3f : 0.9f;
 
-                if (perfect)
+                if (grade == ParryGrade.Perfect)
                 {
                     parryFlash = 1f;
                     PulseHaptic();
@@ -456,6 +508,13 @@ namespace OMTK
                     ShowSubtitle("Now. Swipe.", 1.15f);
                     promptText.text = "SWIPE";
                     Audio.Speak("Perfect. Swipe.");
+                }
+                else if (grade == ParryGrade.Glancing)
+                {
+                    parryFlash = 0.45f;
+                    ShowSubtitle("Glancing. It slips away.", 1.05f);
+                    promptText.text = "LISTEN";
+                    Audio.Speak("Glancing.");
                 }
                 else
                 {
@@ -497,11 +556,25 @@ namespace OMTK
             ShowSubtitle("The blade finds air.", 0.7f);
         }
 
-        private void KillEnemy(OMTKEnemy enemy)
+        private bool KillEnemy(OMTKEnemy enemy)
         {
+            if (enemy == null)
+            {
+                return false;
+            }
+
+            float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, enemy.Azimuth));
+            if (angle > OMTKConfig.StandardParryAngle)
+            {
+                Audio.Play2D(Audio.OffAxisClip, 0.5f);
+                ShowSubtitle("The opening is behind you.", 0.95f);
+                promptText.text = "TURN";
+                return false;
+            }
+
             if (!enemy.Kill())
             {
-                return;
+                return false;
             }
 
             if (token == enemy)
@@ -517,6 +590,7 @@ namespace OMTK
             promptText.text = "LISTEN";
             BestWave = Mathf.Max(BestWave, Wave);
             SaveProgress();
+            return true;
         }
 
         private OMTKEnemy FindStaggered()

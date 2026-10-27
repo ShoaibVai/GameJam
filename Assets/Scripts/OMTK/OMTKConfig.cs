@@ -24,6 +24,15 @@ namespace OMTK
         public const int SampleRate = 44100;
         public const float PerfectWindow = 0.14f;
         public const float GracePerfectWindow = 0.22f;
+        public const float PerfectParryAngle = 18f;
+        public const float GracePerfectParryAngle = 25f;
+        public const float StandardParryAngle = 35f;
+        public const float GlancingDeflectAngle = 40f;
+        public const float StandardParryWindow = 0.35f;
+        public const float GuardLockoutDuration = 0.45f;
+        public const float TinnitusFrequency = 900f;
+        public const float TinnitusDuration = 0.8f;
+        public const float PerfectStaggerDuration = 1.2f;
         public const int BaseMaxHp = 3;
         public const float RunIntroDuration = 3.4f;
         public const float FinaleTurnWindow = 35f;
