@@ -53,6 +53,7 @@ namespace OMTK
         public AudioClip LockChargerClip { get; private set; }
         public AudioClip LockConjurerClip { get; private set; }
         public AudioClip CalibrationClip { get; private set; }
+        public AudioClip RecenterClip { get; private set; }
 
         public void Init(GameObject owner)
         {
@@ -96,6 +97,7 @@ namespace OMTK
             LockChargerClip = AudioSynth.ResonanceLock(EnemyVariant.Charger);
             LockConjurerClip = AudioSynth.ResonanceLock(EnemyVariant.Conjurer);
             CalibrationClip = AudioSynth.CalibrationTone();
+            RecenterClip = AudioSynth.Recenter();
         }
 
         public AudioClip Windup(EnemyVariant variant)
@@ -242,7 +244,7 @@ namespace OMTK
 
         public void Speak(string text)
         {
-            if (string.IsNullOrEmpty(text) || narratorMode == 2)
+            if (string.IsNullOrEmpty(text) || narratorMode == 2 || AudioListener.volume <= 0.01f)
             {
                 return;
             }

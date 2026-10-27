@@ -100,6 +100,16 @@ namespace OMTK
         private bool optionsOpen;
         private bool twoFingerActive;
         private int optionsIndex;
+        private float twoFingerDownAt;
+        private float lastTwoFingerTapAt = -10f;
+        private bool twoFingerPending;
+        private float twoFingerPendingUntil;
+        private float masterVolume = 1f;
+        private AudioClip lastCueClip;
+        private Vector3 lastCuePosition;
+        private float lastCueVolume = 1f;
+        private float lastCuePitch = 1f;
+        private bool lastCueLowPass;
         private bool calibrationDone;
         private bool calibrationAlignedAnnounced;
         private float calibrationNextNudge;
@@ -115,7 +125,11 @@ namespace OMTK
         private const string NarratorKey = "OMTK_NarratorMode";
         private const string HapticsKey = "OMTK_Haptics";
         private const string RadarAssistKey = "OMTK_RadarAssist";
-        private const int OptionsCount = 3;
+        private const string VolumeKey = "OMTK_Volume";
+        private const int OptionsCount = 4;
+        private const float VolumeStep = 0.25f;
+        private const float TwoFingerTapWindow = 0.34f;
+        private const float TwoFingerMaxTapDuration = 0.55f;
         private const string BootLine = "One More Time, Knight. Tap once to begin. Hold to open options. Turn your head to listen. Tap to parry. Swipe to answer.";
         private const int RadarBlipCount = 4;
 
@@ -186,6 +200,15 @@ namespace OMTK
             StateTime += deltaTime;
             guardLockout = Mathf.Max(0f, guardLockout - deltaTime);
             UpdateInput(deltaTime);
+
+            if (twoFingerPending && Time.unscaledTime >= twoFingerPendingUntil)
+            {
+                twoFingerPending = false;
+                if (!(State == GameState.Title && optionsOpen))
+                {
+                    RepeatLastCueAndHeading();
+                }
+            }
 
             if (State == GameState.Intro && StateTime >= introDuration)
             {
@@ -309,6 +332,7 @@ namespace OMTK
                     if (chosen != null && chosen.BeginWindup())
                     {
                         token = chosen;
+                        RememberLastCue(token.WindupClip, token.Position, 0.9f, 1f, false);
                     }
                 }
             }
@@ -330,6 +354,7 @@ namespace OMTK
             Audio.Unduck();
             Audio.PlayMusic();
             Audio.StopConductor();
+            RecenterYaw();
             introDuration = OMTKConfig.RunIntroDuration;
             SetState(GameState.Intro);
             ShowSubtitle("Headphones on. Turn your head. Tap to parry. Swipe to answer.", 3.4f);
@@ -350,6 +375,7 @@ namespace OMTK
             Audio.Unduck();
             Audio.PlayMusic();
             Audio.StopConductor();
+            RecenterYaw();
             introDuration = 1.65f;
             SetState(GameState.Intro);
             ShowSubtitle("Again. Listen.", 1.6f);
@@ -360,9 +386,11 @@ namespace OMTK
         private void StartCalibration()
         {
             SetState(GameState.Calibration);
+            RecenterYaw();
             calibrationAlignedAnnounced = false;
             calibrationNextNudge = 5.2f;
             Audio.StartCalibration(OMTKConfig.CalibrationAzimuth, OMTKConfig.CalibrationToneDistance);
+            RememberLastCue(Audio.CalibrationClip, Quaternion.Euler(0f, OMTKConfig.CalibrationAzimuth, 0f) * Vector3.forward * OMTKConfig.CalibrationToneDistance, 0.6f, 1f, false);
             Narrator("Dull means behind. Turn until the blade sings, then tap.", 4.2f);
             promptText.text = "TURN";
             titleText.gameObject.SetActive(false);
@@ -434,6 +462,7 @@ namespace OMTK
             ClearEnemies();
             windupCooldown = narratorMode == 0 ? 2.55f : 1.65f;
             SetState(GameState.Playing);
+            RecenterYaw();
 
             if (wave == 1)
             {
@@ -487,6 +516,7 @@ namespace OMTK
                 if (tutorialKiller.BeginScriptedWindup(OMTKConfig.TutorialFirstDeathWindup))
                 {
                     token = tutorialKiller;
+                    RememberLastCue(token.WindupClip, token.Position, 0.9f, 1f, false);
                     ShowSubtitle("The first cut is inevitable.", 1.1f);
                     promptText.text = "LISTEN";
                 }
@@ -526,6 +556,7 @@ namespace OMTK
             {
                 finaleFacing = true;
                 Audio.Play2D(Audio.ConductorReadyClip, 0.9f);
+                RememberLastCue(Audio.ConductorReadyClip, new Vector3(0f, 0f, -4f), 0.9f, 1f, false);
                 Narrator("Now. Swipe.", 1.4f);
                 promptText.text = "SWIPE";
             }
@@ -561,6 +592,7 @@ namespace OMTK
             tutorialKiller = null;
             fatalClip = killer.WindupClip;
             fatalPosition = killer.Position;
+            RememberLastCue(fatalClip, fatalPosition, 0.9f, 0.62f, true);
             fatalReplayPlayed = false;
             Audio.StopVoice();
             Audio.PlayFatal(fatalClip, fatalPosition);
@@ -889,6 +921,16 @@ namespace OMTK
                 {
                     ToggleOptions();
                 }
+
+                if (keyboard.hKey.wasPressedThisFrame)
+                {
+                    RepeatLastCueAndHeading();
+                }
+
+                if (keyboard.rKey.wasPressedThisFrame)
+                {
+                    RecenterYawAndReport();
+                }
             }
 
             if (Gyroscope.current != null)
@@ -927,9 +969,10 @@ namespace OMTK
                     }
                 }
 
-                if (pressed >= 2)
+                if (pressed >= 2 && !twoFingerActive)
                 {
                     twoFingerActive = true;
+                    twoFingerDownAt = Time.unscaledTime;
                 }
 
                 if (twoFingerActive)
@@ -937,9 +980,28 @@ namespace OMTK
                     if (pressed == 0)
                     {
                         twoFingerActive = false;
-                        if (State == GameState.Title)
+                        if (Time.unscaledTime - twoFingerDownAt <= TwoFingerMaxTapDuration)
                         {
-                            ToggleOptions();
+                            if (optionsOpen)
+                            {
+                                ToggleOptions();
+                            }
+                            else
+                            {
+                                float now = Time.unscaledTime;
+                                if (now - lastTwoFingerTapAt <= TwoFingerTapWindow)
+                                {
+                                    lastTwoFingerTapAt = -10f;
+                                    twoFingerPending = false;
+                                    RecenterYawAndReport();
+                                }
+                                else
+                                {
+                                    lastTwoFingerTapAt = now;
+                                    twoFingerPending = true;
+                                    twoFingerPendingUntil = now + TwoFingerTapWindow;
+                                }
+                            }
                         }
                     }
 
@@ -1051,6 +1113,52 @@ namespace OMTK
             narratorMode = Mathf.Clamp(PlayerPrefs.GetInt(NarratorKey, 0), 0, 2);
             hapticsEnabled = PlayerPrefs.GetInt(HapticsKey, 1) == 1;
             OMTKConfig.RadarAssist = PlayerPrefs.GetInt(RadarAssistKey, OMTKConfig.RadarAssist ? 1 : 0) == 1;
+            masterVolume = Mathf.Clamp01(PlayerPrefs.GetFloat(VolumeKey, 1f));
+            AudioListener.volume = masterVolume;
+        }
+
+        private void RecenterYaw()
+        {
+            PlayerYaw = 0f;
+            Audio.Play2D(Audio.RecenterClip, 0.5f);
+        }
+
+        private void RecenterYawAndReport()
+        {
+            RecenterYaw();
+            PulseHaptic();
+            ShowSubtitle("RECENTERED\nHP " + Hp + "/" + MaxHp + "   WAVE " + Wave, 1.6f);
+            Audio.Speak("Recentered. HP " + Hp + " of " + MaxHp + ". Wave " + Wave + ".");
+        }
+
+        private void RememberLastCue(AudioClip clip, Vector3 position, float volume, float pitch, bool lowPass)
+        {
+            lastCueClip = clip;
+            lastCuePosition = position;
+            lastCueVolume = volume;
+            lastCuePitch = pitch;
+            lastCueLowPass = lowPass;
+        }
+
+        private void RepeatLastCueAndHeading()
+        {
+            int heading = Mathf.RoundToInt(Mathf.Repeat(PlayerYaw, 360f)) % 360;
+            ShowSubtitle("HEADING " + heading.ToString("000") + "°", 1.5f);
+            if (lastCueClip == null)
+            {
+                Audio.Play2D(Audio.TickClip, 0.4f, 1.2f);
+                Audio.Speak("Heading " + heading + " degrees.");
+                return;
+            }
+
+            Audio.PlayAt(lastCueClip, lastCuePosition, lastCueVolume, lastCuePitch, lastCueLowPass);
+            StartCoroutine(SpeakHeadingAfterCue(heading, Mathf.Min(1.1f, lastCueClip.length * 0.6f)));
+        }
+
+        private IEnumerator SpeakHeadingAfterCue(int heading, float delay)
+        {
+            yield return new WaitForSecondsRealtime(delay);
+            Audio.Speak("Heading " + heading + " degrees.");
         }
 
         private void ToggleOptions()
@@ -1101,9 +1209,13 @@ namespace OMTK
             {
                 ToggleHaptics();
             }
-            else
+            else if (optionsIndex == 2)
             {
                 ToggleRadar();
+            }
+            else
+            {
+                CycleVolume();
             }
         }
 
@@ -1155,18 +1267,40 @@ namespace OMTK
             Audio.Speak("Radar assist " + (OMTKConfig.RadarAssist ? "on." : "off."));
         }
 
+        private void CycleVolume()
+        {
+            masterVolume = Mathf.Round((masterVolume - VolumeStep) * 100f) / 100f;
+            if (masterVolume < -0.001f)
+            {
+                masterVolume = 1f;
+            }
+
+            AudioListener.volume = masterVolume;
+            PlayerPrefs.SetFloat(VolumeKey, masterVolume);
+            PlayerPrefs.Save();
+            if (masterVolume <= 0.01f)
+            {
+                Audio.StopVoice();
+            }
+
+            subtitleText.text = OptionsText();
+            Audio.Speak("Volume " + Mathf.RoundToInt(masterVolume * 100f) + " percent.");
+            PulseHaptic();
+        }
+
         private string OptionsText()
         {
             string narrator = "NARRATOR: " + NarratorName();
             string haptics = "HAPTICS: " + (hapticsEnabled ? "ON" : "OFF");
             string radar = "RADAR ASSIST: " + (OMTKConfig.RadarAssist ? "ON" : "OFF");
-            string[] rows = { narrator, haptics, radar };
+            string volume = "VOLUME: " + Mathf.RoundToInt(masterVolume * 100f) + "%";
+            string[] rows = { narrator, haptics, radar, volume };
             for (int i = 0; i < rows.Length; i++)
             {
                 rows[i] = (i == optionsIndex ? "> " : "  ") + rows[i];
             }
 
-            return rows[0] + "\n" + rows[1] + "\n" + rows[2] + "\nTAP: CHANGE   SWIPE: NEXT";
+            return rows[0] + "\n" + rows[1] + "\n" + rows[2] + "\n" + rows[3] + "\nTAP: CHANGE   SWIPE: NEXT";
         }
 
         private string OptionsSpeech()
@@ -1186,7 +1320,12 @@ namespace OMTK
                 return "Haptics " + (hapticsEnabled ? "on." : "off.");
             }
 
-            return "Radar assist " + (OMTKConfig.RadarAssist ? "on." : "off.") + ".";
+            if (optionsIndex == 2)
+            {
+                return "Radar assist " + (OMTKConfig.RadarAssist ? "on." : "off.") + ".";
+            }
+
+            return "Volume " + Mathf.RoundToInt(masterVolume * 100f) + " percent.";
         }
 
         private string NarratorName()

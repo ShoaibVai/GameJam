@@ -108,3 +108,26 @@ This log records implementation work against the acoustic redesign specification
 - **Playtests:** Calibration alignment/tap, fallback, deterministic tutorial death, and radar independence are scheduled for Tier 4.
 - **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
 - **Deviations/deferred work:** The death sequence remains the existing passive replay/auto-retry until Tier 3 replaces it with the interactive Trace the Blow rehearsal. The temporary Echo unlock is suppressed specifically for the tutorial death so Tier 1 does not grant permanent combat power from the scripted failure.
+
+## Tier 1.6 — Yaw Hygiene, Accessibility Gestures, and Volume
+
+- **Status:** Implemented; playtest verification pending.
+- **Behavior implemented:**
+  - `PlayerYaw` recenters to 0° on `StartRun`, `Retry`, `BeginWave`, and calibration start.
+  - Every recenter plays a distinct centered two-tone orientation cue so the new forward reference is audible.
+  - Two-finger tap repeats the last stored acoustic cue and speaks the current heading. If no cue exists, it plays a tick and speaks the heading.
+  - Two-finger double-tap recenters yaw, plays the recenter cue, and speaks current HP and wave.
+  - Single-tap accessibility actions are delayed by a 0.34-second double-tap window so a double-tap does not also fire the single-tap action.
+  - Two-finger input cancels the active pointer gesture, preventing accidental parries or slashes.
+  - While the options menu is open, two-finger tap closes it instead of triggering accessibility actions.
+  - Keyboard `H` repeats the last cue and heading; keyboard `R` recenters and reports HP/wave for desktop testing.
+  - Added a persisted `VOLUME` options row cycling in 25% steps and applying `AudioListener.volume`. Speech is suppressed at zero volume.
+- **Files changed:** `Assets/Scripts/OMTK/OMTKConfig.cs`, `Assets/Scripts/OMTK/AudioSynth.cs`, `Assets/Scripts/OMTK/OMTKAudio.cs`, `Assets/Scripts/OMTK/OMTKGame.cs`.
+- **Configuration added:**
+  - `VolumeKey = "OMTK_Volume"` with a default of 1.0 and 0.25 steps.
+  - `TwoFingerTapWindow = 0.34f`
+  - `TwoFingerMaxTapDuration = 0.55f`
+  - `OptionsCount = 4`
+- **Playtests:** Recenter behavior, heading/HP announcements, two-finger gesture separation, and volume persistence are scheduled for Tier 4.
+- **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
+- **Deviations/deferred work:** Two-finger tap no longer opens the title options menu; the documented single-finger hold remains the options entry point. This avoids conflicting with the required accessibility gesture. Device audio, haptics, and TTS behavior have not been verified in this environment.

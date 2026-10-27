@@ -340,6 +340,17 @@ namespace OMTK
             return Make("off_axis", data);
         }
 
+        public static AudioClip Recenter()
+        {
+            float[] data = Buffer(0.3f);
+            AddTone(data, 523.25f, 0f, 0.14f, 0.18f, Wave.Sine, 0.004f, 0.1f);
+            AddTone(data, 783.99f, 0.1f, 0.18f, 0.12f, Wave.Sine, 0.004f, 0.14f);
+            AddFilteredNoise(data, 0f, 0.05f, 0.02f, 3600f, 0.4f);
+            Normalize(data, 0.5f);
+            FadeEdges(data, 0.006f);
+            return Make("recenter", data);
+        }
+
         public static AudioClip CalibrationTone()
         {
             float[] data = Buffer(2f);
