@@ -340,6 +340,16 @@ namespace OMTK
             return Make("off_axis", data);
         }
 
+        public static AudioClip CalibrationTone()
+        {
+            float[] data = Buffer(2f);
+            AddTone(data, 440f, 0f, 2f, 0.34f, Wave.Sine, 0f, 0f);
+            AddTone(data, 880f, 0f, 2f, 0.13f, Wave.Sine, 0f, 0f);
+            AddTone(data, 1320f, 0f, 2f, 0.06f, Wave.Sine, 0f, 0f);
+            Normalize(data, 0.5f);
+            return Make("calibration_tone", data);
+        }
+
         public static AudioClip ResonanceLock(EnemyVariant variant)
         {
             float[] data = Buffer(0.28f);

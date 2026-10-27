@@ -40,6 +40,13 @@ namespace OMTK
         public const float TouchDeadZone = 8f;
         public const float SwipeDistanceThreshold = 90f;
         public const float SwipeVelocityThreshold = 800f;
+        public const float CalibrationAzimuth = 150f;
+        public const float CalibrationAlignAngle = 15f;
+        public const float CalibrationToneDistance = 3.2f;
+        public const float CalibrationFallbackDuration = 10.5f;
+        public const float CalibrationNudgeInterval = 3.4f;
+        public const float TutorialFirstDeathDelay = 3f;
+        public const float TutorialFirstDeathWindup = 0.85f;
         public const int BaseMaxHp = 3;
         public const float RunIntroDuration = 3.4f;
         public const float FinaleTurnWindow = 35f;

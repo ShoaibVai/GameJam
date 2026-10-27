@@ -203,6 +203,30 @@ namespace OMTK
             }
         }
 
+        public void PlaceAtDistance(float distance)
+        {
+            Distance = Mathf.Max(0.6f, distance);
+        }
+
+        public bool BeginScriptedWindup(float duration)
+        {
+            if (!IsAlive)
+            {
+                return false;
+            }
+
+            State = EnemyState.Windup;
+            WindupDuration = duration;
+            WindupRemaining = duration;
+            foresightCue = true;
+            source.clip = WindupClip;
+            source.pitch = 1f;
+            source.volume = 0.95f;
+            source.Play();
+            presenceTarget = 0.07f;
+            return true;
+        }
+
         public bool BeginWindup()
         {
             if (State != EnemyState.Approach || Distance > 3.15f)

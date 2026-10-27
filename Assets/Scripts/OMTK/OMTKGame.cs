@@ -11,6 +11,7 @@ namespace OMTK
     {
         Title,
         Intro,
+        Calibration,
         Playing,
         Interlude,
         Death,
@@ -99,6 +100,14 @@ namespace OMTK
         private bool optionsOpen;
         private bool twoFingerActive;
         private int optionsIndex;
+        private bool calibrationDone;
+        private bool calibrationAlignedAnnounced;
+        private float calibrationNextNudge;
+        private OMTKEnemy tutorialKiller;
+        private bool tutorialDeathActive;
+        private bool tutorialWindupStarted;
+        private float tutorialDeathTimer;
+        private bool currentDeathTutorial;
 
         private const string DeathsKey = "OMTK_Deaths";
         private const string BestWaveKey = "OMTK_BestWave";
@@ -180,7 +189,18 @@ namespace OMTK
 
             if (State == GameState.Intro && StateTime >= introDuration)
             {
-                BeginWave(1);
+                if (Attempt == 1 && !calibrationDone)
+                {
+                    StartCalibration();
+                }
+                else
+                {
+                    BeginWave(1);
+                }
+            }
+            else if (State == GameState.Calibration)
+            {
+                UpdateCalibration();
             }
             else if (State == GameState.Playing)
             {
@@ -219,6 +239,11 @@ namespace OMTK
 
             token = null;
             windupCooldown = narratorMode == 0 ? 1.7f : 1.15f;
+            if (tutorialDeathActive && enemy == tutorialKiller)
+            {
+                Hp = 1;
+            }
+
             Hp--;
             damageFlash = 1f;
             PulseHaptic();
@@ -249,6 +274,8 @@ namespace OMTK
             }
 
             enemies.RemoveAll(enemy => !enemy.IsAlive);
+
+            UpdateTutorialDeath(deltaTime);
 
             if (enemies.Count == 0)
             {
@@ -294,8 +321,12 @@ namespace OMTK
             Wave = 1;
             Hp = MaxHp;
             guardLockout = 0f;
+            calibrationDone = false;
+            calibrationAlignedAnnounced = false;
+            ClearTutorial();
             ClearEnemies();
             Audio.StopTinnitus();
+            Audio.StopCalibration();
             Audio.Unduck();
             Audio.PlayMusic();
             Audio.StopConductor();
@@ -312,8 +343,10 @@ namespace OMTK
             Wave = 1;
             Hp = MaxHp;
             guardLockout = 0f;
+            ClearTutorial();
             ClearEnemies();
             Audio.StopTinnitus();
+            Audio.StopCalibration();
             Audio.Unduck();
             Audio.PlayMusic();
             Audio.StopConductor();
@@ -322,6 +355,75 @@ namespace OMTK
             ShowSubtitle("Again. Listen.", 1.6f);
             promptText.text = "LISTEN";
             Audio.Speak("Again.");
+        }
+
+        private void StartCalibration()
+        {
+            SetState(GameState.Calibration);
+            calibrationAlignedAnnounced = false;
+            calibrationNextNudge = 5.2f;
+            Audio.StartCalibration(OMTKConfig.CalibrationAzimuth, OMTKConfig.CalibrationToneDistance);
+            Narrator("Dull means behind. Turn until the blade sings, then tap.", 4.2f);
+            promptText.text = "TURN";
+            titleText.gameObject.SetActive(false);
+        }
+
+        private void UpdateCalibration()
+        {
+            Audio.UpdateCalibration(PlayerYaw, OMTKConfig.CalibrationAzimuth);
+            float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, OMTKConfig.CalibrationAzimuth));
+            bool aligned = angle <= OMTKConfig.CalibrationAlignAngle;
+
+            if (aligned)
+            {
+                promptText.text = "TAP";
+                if (!calibrationAlignedAnnounced)
+                {
+                    calibrationAlignedAnnounced = true;
+                    ShowSubtitle("The blade sings. Tap.", 1.2f);
+                    Audio.Speak("Tap.");
+                }
+            }
+            else
+            {
+                promptText.text = "TURN";
+                calibrationAlignedAnnounced = false;
+            }
+
+            if (StateTime >= calibrationNextNudge && StateTime < OMTKConfig.CalibrationFallbackDuration - 1.2f)
+            {
+                calibrationNextNudge = StateTime + OMTKConfig.CalibrationNudgeInterval;
+                Narrator(aligned ? "Tap when the blade sings." : "Turn toward the tone.", 1.35f);
+            }
+
+            if (StateTime >= OMTKConfig.CalibrationFallbackDuration)
+            {
+                FinishCalibration(false);
+            }
+        }
+
+        private void FinishCalibration(bool aligned)
+        {
+            calibrationDone = true;
+            Audio.StopCalibration();
+            if (aligned)
+            {
+                Audio.Play2D(Audio.EchoUnlockClip, 0.45f, 1.35f);
+                BeginWave(1);
+            }
+            else
+            {
+                Audio.Play2D(Audio.TickClip, 0.6f);
+                BeginWave(1);
+            }
+        }
+
+        private void ClearTutorial()
+        {
+            tutorialKiller = null;
+            tutorialDeathActive = false;
+            tutorialWindupStarted = false;
+            tutorialDeathTimer = 0f;
         }
 
         private void BeginWave(int wave)
@@ -335,7 +437,18 @@ namespace OMTK
 
             if (wave == 1)
             {
-                Spawn(EnemyVariant.Stalker, 62f);
+                float bearing = Attempt == 1 ? OMTKConfig.CalibrationAzimuth : 62f;
+                Spawn(EnemyVariant.Stalker, bearing);
+                if (Attempt == 1)
+                {
+                    tutorialKiller = enemies[enemies.Count - 1];
+                    tutorialKiller.PlaceAtDistance(5f);
+                    tutorialDeathActive = true;
+                    tutorialWindupStarted = false;
+                    tutorialDeathTimer = OMTKConfig.TutorialFirstDeathDelay;
+                    windupCooldown = 999f;
+                }
+
                 Narrator("Wave one. Something is circling you.", 2.25f);
             }
             else if (wave == 2)
@@ -352,6 +465,32 @@ namespace OMTK
 
             promptText.text = "LISTEN";
             titleText.gameObject.SetActive(false);
+        }
+
+        private void UpdateTutorialDeath(float deltaTime)
+        {
+            if (!tutorialDeathActive || tutorialKiller == null)
+            {
+                return;
+            }
+
+            if (!tutorialKiller.IsAlive)
+            {
+                tutorialDeathActive = false;
+                return;
+            }
+
+            tutorialDeathTimer -= deltaTime;
+            if (!tutorialWindupStarted && tutorialDeathTimer <= 0f)
+            {
+                tutorialWindupStarted = true;
+                if (tutorialKiller.BeginScriptedWindup(OMTKConfig.TutorialFirstDeathWindup))
+                {
+                    token = tutorialKiller;
+                    ShowSubtitle("The first cut is inevitable.", 1.1f);
+                    promptText.text = "LISTEN";
+                }
+            }
         }
 
         private void StartInterlude()
@@ -416,6 +555,10 @@ namespace OMTK
             damageFlash = 1f;
             PulseHaptic();
             Audio.StopTinnitus();
+            currentDeathTutorial = tutorialDeathActive;
+            tutorialDeathActive = false;
+            tutorialWindupStarted = false;
+            tutorialKiller = null;
             fatalClip = killer.WindupClip;
             fatalPosition = killer.Position;
             fatalReplayPlayed = false;
@@ -432,16 +575,23 @@ namespace OMTK
             if (!echoAnnounced && StateTime >= 1.05f)
             {
                 echoAnnounced = true;
-                EchoId? unlocked = UnlockNextEcho();
-                if (unlocked.HasValue)
+                if (currentDeathTutorial)
                 {
-                    Audio.Play2D(Audio.EchoUnlockClip, 0.85f);
-                    Narrator(OMTKConfig.EchoName(unlocked.Value) + ". " + OMTKConfig.EchoHint(unlocked.Value), 2.25f);
                     promptText.text = "TAP TO RISE";
                 }
                 else
                 {
-                    promptText.text = "TAP TO RISE";
+                    EchoId? unlocked = UnlockNextEcho();
+                    if (unlocked.HasValue)
+                    {
+                        Audio.Play2D(Audio.EchoUnlockClip, 0.85f);
+                        Narrator(OMTKConfig.EchoName(unlocked.Value) + ". " + OMTKConfig.EchoHint(unlocked.Value), 2.25f);
+                        promptText.text = "TAP TO RISE";
+                    }
+                    else
+                    {
+                        promptText.text = "TAP TO RISE";
+                    }
                 }
             }
 
@@ -449,7 +599,15 @@ namespace OMTK
             {
                 fatalReplayPlayed = true;
                 Audio.PlayAt(fatalClip, fatalPosition, 0.85f, 0.62f, true);
-                ShowSubtitle("Remember this.", 1.2f);
+                if (currentDeathTutorial)
+                {
+                    ShowSubtitle("Turn toward the sound.", 1.25f);
+                    Audio.Speak("Turn toward the sound.");
+                }
+                else
+                {
+                    ShowSubtitle("Remember this.", 1.2f);
+                }
             }
 
             if (StateTime >= 4.8f)
@@ -467,6 +625,13 @@ namespace OMTK
 
             if (guardLockout > 0f)
             {
+                return;
+            }
+
+            if (tutorialDeathActive && tutorialWindupStarted && token == tutorialKiller)
+            {
+                Audio.Play2D(Audio.OffAxisClip, 0.35f);
+                ShowSubtitle("This blow cannot be stopped.", 1f);
                 return;
             }
 
@@ -1065,7 +1230,28 @@ namespace OMTK
             }
             else if (State == GameState.Intro && StateTime > 0.55f)
             {
-                BeginWave(1);
+                if (Attempt == 1 && !calibrationDone)
+                {
+                    StartCalibration();
+                }
+                else
+                {
+                    BeginWave(1);
+                }
+            }
+            else if (State == GameState.Calibration)
+            {
+                float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, OMTKConfig.CalibrationAzimuth));
+                if (angle <= OMTKConfig.CalibrationAlignAngle)
+                {
+                    FinishCalibration(true);
+                }
+                else
+                {
+                    ShowSubtitle("Not yet. Turn toward the tone.", 1.25f);
+                    Audio.Speak("Not yet. Turn toward the tone.");
+                    promptText.text = "TURN";
+                }
             }
             else if (State == GameState.Playing)
             {
@@ -1103,7 +1289,18 @@ namespace OMTK
             }
             else if (State == GameState.Intro && StateTime > 0.55f)
             {
-                BeginWave(1);
+                if (Attempt == 1 && !calibrationDone)
+                {
+                    StartCalibration();
+                }
+                else
+                {
+                    BeginWave(1);
+                }
+            }
+            else if (State == GameState.Calibration)
+            {
+                return;
             }
             else if (State == GameState.Playing)
             {
@@ -1209,8 +1406,9 @@ namespace OMTK
                 return;
             }
 
-            SetRadarVisible(OMTKConfig.RadarAssist);
-            if (!OMTKConfig.RadarAssist)
+            bool wantRadar = OMTKConfig.RadarAssist && State != GameState.Calibration;
+            SetRadarVisible(wantRadar);
+            if (!wantRadar)
             {
                 return;
             }
@@ -1434,6 +1632,10 @@ namespace OMTK
             {
                 bool preparingVoice = systemTts != null && !systemTts.IsReady && !systemTts.IsFailed;
                 statusText.text = optionsOpen ? "ACCESSIBILITY" : preparingVoice ? "PREPARING VOICE" : "HEADPHONES ON";
+            }
+            else if (State == GameState.Calibration)
+            {
+                statusText.text = "CALIBRATION";
             }
             else if (State == GameState.Finale)
             {

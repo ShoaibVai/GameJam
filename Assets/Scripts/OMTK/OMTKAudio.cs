@@ -10,6 +10,8 @@ namespace OMTK
         private AudioSource effects;
         private AudioSource conductor;
         private AudioSource tinnitus;
+        private AudioSource calibration;
+        private AudioLowPassFilter calibrationFilter;
         private AudioLowPassFilter musicFilter;
         private AudioLowPassFilter voiceFilter;
         private AudioLowPassFilter effectsFilter;
@@ -50,6 +52,7 @@ namespace OMTK
         public AudioClip LockStalkerClip { get; private set; }
         public AudioClip LockChargerClip { get; private set; }
         public AudioClip LockConjurerClip { get; private set; }
+        public AudioClip CalibrationClip { get; private set; }
 
         public void Init(GameObject owner)
         {
@@ -92,6 +95,7 @@ namespace OMTK
             LockStalkerClip = AudioSynth.ResonanceLock(EnemyVariant.Stalker);
             LockChargerClip = AudioSynth.ResonanceLock(EnemyVariant.Charger);
             LockConjurerClip = AudioSynth.ResonanceLock(EnemyVariant.Conjurer);
+            CalibrationClip = AudioSynth.CalibrationTone();
         }
 
         public AudioClip Windup(EnemyVariant variant)
@@ -107,6 +111,50 @@ namespace OMTK
         public AudioClip Lock(EnemyVariant variant)
         {
             return variant == EnemyVariant.Charger ? LockChargerClip : variant == EnemyVariant.Conjurer ? LockConjurerClip : LockStalkerClip;
+        }
+
+        public void StartCalibration(float azimuth, float distance)
+        {
+            if (calibration == null)
+            {
+                calibration = CreateSource("Calibration", true);
+                calibration.clip = CalibrationClip;
+                calibration.loop = true;
+                calibration.volume = 0.6f;
+                calibration.minDistance = 0.8f;
+                calibration.maxDistance = 14f;
+                calibration.rolloffMode = AudioRolloffMode.Linear;
+                calibration.dopplerLevel = 0f;
+                calibration.spread = 0f;
+                calibrationFilter = AddLowPass(calibration);
+            }
+
+            calibration.transform.position = Quaternion.Euler(0f, azimuth, 0f) * Vector3.forward * distance;
+            calibrationFilter.cutoffFrequency = 700f;
+            calibration.Stop();
+            calibration.Play();
+        }
+
+        public void UpdateCalibration(float playerYaw, float azimuth)
+        {
+            if (calibration == null || calibrationFilter == null)
+            {
+                return;
+            }
+
+            float angle = Mathf.Abs(Mathf.DeltaAngle(playerYaw, azimuth));
+            float cutoff = angle <= OMTKConfig.CalibrationAlignAngle
+                ? 5000f
+                : Mathf.Lerp(5000f, 600f, Mathf.Clamp01((angle - OMTKConfig.CalibrationAlignAngle) / 90f));
+            calibrationFilter.cutoffFrequency = cutoff;
+        }
+
+        public void StopCalibration()
+        {
+            if (calibration != null)
+            {
+                calibration.Stop();
+            }
         }
 
         public void Tick()

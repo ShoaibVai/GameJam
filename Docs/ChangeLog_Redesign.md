@@ -82,3 +82,29 @@ This log records implementation work against the acoustic redesign specification
 - **Playtests:** Radar-off invisibility, radar persistence, and resonance-ring independence are scheduled for Tier 4.
 - **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
 - **Deviations/deferred work:** The options menu uses tap-to-change and swipe-to-navigate rather than the previous fixed tap/swipe actions. This is required to expose more than two settings without adding new gestures. Radar behavior has not yet been verified in play mode.
+
+## Tier 1.5 — Wave 0 Calibration and Scripted First Death
+
+- **Status:** Implemented; playtest verification pending.
+- **Behavior implemented:**
+  - Attempt 1 now routes from the intro into an interactive calibration state before Wave 1.
+  - Calibration emits a spatial tuning tone from 150° at 3.2 m. Its low-pass cutoff rises from 600 Hz toward 5000 Hz as the player faces it, reaching 5000 Hz inside the 15° alignment window.
+  - The exact instructional line is spoken and subtitled: “Dull means behind. Turn until the blade sings, then tap.”
+  - Tapping inside 15° starts Wave 1. Tapping outside the window repeats the turn instruction.
+  - Slow or missed orientation is handled with repeated nudges and an explicit 10.5-second fallback that starts Wave 1 rather than trapping the player.
+  - Directional radar is hidden during calibration so the heading readout cannot replace listening.
+  - Attempt 1 Wave 1 uses a deterministic tutorial Stalker at the calibration bearing. It reaches attack range, plays the normal Stalker windup identity, and forces a fatal hit regardless of parry input or radar state.
+  - The tutorial death replays the fatal cue through the existing death sequence and narrates “Turn toward the sound.” after the replay.
+  - The tutorial death does not unlock a permanent Echo, preventing the scripted failure from granting a persistent combat advantage.
+- **Files changed:** `Assets/Scripts/OMTK/OMTKConfig.cs`, `Assets/Scripts/OMTK/AudioSynth.cs`, `Assets/Scripts/OMTK/OMTKAudio.cs`, `Assets/Scripts/OMTK/OMTKEnemy.cs`, `Assets/Scripts/OMTK/OMTKGame.cs`.
+- **Configuration added:**
+  - `CalibrationAzimuth = 150f`
+  - `CalibrationAlignAngle = 15f`
+  - `CalibrationToneDistance = 3.2f`
+  - `CalibrationFallbackDuration = 10.5f`
+  - `CalibrationNudgeInterval = 3.4f`
+  - `TutorialFirstDeathDelay = 3f`
+  - `TutorialFirstDeathWindup = 0.85f`
+- **Playtests:** Calibration alignment/tap, fallback, deterministic tutorial death, and radar independence are scheduled for Tier 4.
+- **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
+- **Deviations/deferred work:** The death sequence remains the existing passive replay/auto-retry until Tier 3 replaces it with the interactive Trace the Blow rehearsal. The temporary Echo unlock is suppressed specifically for the tutorial death so Tier 1 does not grant permanent combat power from the scripted failure.
