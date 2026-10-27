@@ -1,4 +1,3 @@
-#if UNITY_EDITOR
 using System.Collections;
 using System.Reflection;
 using UnityEngine;
@@ -73,6 +72,13 @@ namespace OMTK
                         Tap("intro");
                     }
                     break;
+                case GameState.Calibration:
+                    SetYaw(OMTKConfig.CalibrationAzimuth);
+                    if (game.StateTime > 0.8f)
+                    {
+                        Tap("calibration");
+                    }
+                    break;
                 case GameState.Playing:
                     UpdatePlaying();
                     break;
@@ -110,16 +116,16 @@ namespace OMTK
                 lastToken = token;
                 if (token != null)
                 {
-                    Debug.Log("[PLAYTEST] token=" + token.Variant + " windup=" + token.WindupRemaining.ToString("F2"));
+                    Debug.Log("[PLAYTEST] token=" + token.Variant + " windup=" + token.WindupRemaining.ToString("F2") + " locked=" + token.IsResonanceLocked);
                 }
             }
 
-            if (token != null && token.IsWindingUp)
+            if (token != null)
             {
-                if (token.WindupRemaining <= game.PerfectWindow)
+                SetYaw(token.Azimuth);
+                if (token.IsWindingUp && token.WindupRemaining <= game.PerfectWindow)
                 {
-                    SetYaw(token.Azimuth);
-                    Tap("perfect@" + token.WindupRemaining.ToString("F3"));
+                    Tap("perfect@" + token.WindupRemaining.ToString("F3") + " locked=" + token.IsResonanceLocked);
                 }
 
                 return;
@@ -190,4 +196,3 @@ namespace OMTK
         }
     }
 }
-#endif

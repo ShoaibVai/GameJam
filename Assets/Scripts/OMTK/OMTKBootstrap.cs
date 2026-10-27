@@ -14,6 +14,16 @@ namespace OMTK
 
             GameObject root = new GameObject("One More Time, Knight");
             root.AddComponent<OMTKGame>();
+
+            string[] args = System.Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i] == "-omtkPlaytest")
+                {
+                    root.AddComponent<OMTKPlaytest>();
+                    break;
+                }
+            }
         }
     }
 }
