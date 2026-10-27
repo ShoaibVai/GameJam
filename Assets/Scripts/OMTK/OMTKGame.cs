@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -45,6 +46,13 @@ namespace OMTK
         private readonly float[] audioSamples = new float[256];
         private Camera mainCamera;
         private Image ring;
+        private Image radarDial;
+        private Text radarReadout;
+        private Text[] radarLabels;
+        private RectTransform[] radarBlipRoots;
+        private Image[] radarBlipCores;
+        private Image[] radarBlipGlows;
+        private float radarPingTimer;
         private Text statusText;
         private Text titleText;
         private Text subtitleText;
@@ -69,10 +77,22 @@ namespace OMTK
         private float pointerTravel;
         private bool applicationPaused;
         private float resumeTimeScale = 1f;
+        private AudioClip fatalClip;
+        private Vector3 fatalPosition;
+        private bool fatalReplayPlayed;
+        private OMTKSystemTts systemTts;
+        private int narratorMode;
+        private bool hapticsEnabled;
+        private bool optionsOpen;
+        private bool twoFingerActive;
 
         private const string DeathsKey = "OMTK_Deaths";
         private const string BestWaveKey = "OMTK_BestWave";
         private const string EchoKey = "OMTK_EchoMask";
+        private const string NarratorKey = "OMTK_NarratorMode";
+        private const string HapticsKey = "OMTK_Haptics";
+        private const string BootLine = "One More Time, Knight. Tap once to begin. Hold to open options. Turn your head to listen. Tap to parry. Swipe to answer.";
+        private const int RadarBlipCount = 4;
 
         private void Awake()
         {
@@ -81,18 +101,23 @@ namespace OMTK
             Screen.sleepTimeout = SleepTimeout.NeverSleep;
             Screen.orientation = ScreenOrientation.Portrait;
             LoadProgress();
+            LoadAccessibility();
             CreateCamera();
             Audio = new OMTKAudio();
             Audio.Init(gameObject);
+            systemTts = new OMTKSystemTts();
+            systemTts.Init();
+            Audio.SetSystemTts(systemTts);
+            Audio.SetNarratorMode(narratorMode);
             CreateUI();
             SetState(GameState.Title);
         }
 
         private void Start()
         {
-            ShowSubtitle("Turn your head.\nTap to parry. Swipe to answer.", 999f);
+            ShowSubtitle("Turn your head.\nTap to parry. Swipe to answer.\nHold for options.", 999f);
             promptText.text = "TAP TO BEGIN";
-            Audio.Speak("One more time, knight.");
+            StartCoroutine(AnnounceTitle());
         }
 
         private void OnApplicationPause(bool paused)
@@ -106,6 +131,7 @@ namespace OMTK
             AudioListener.pause = paused;
             if (paused)
             {
+                Audio.StopVoice();
                 resumeTimeScale = Time.timeScale;
                 Time.timeScale = 0f;
             }
@@ -115,9 +141,22 @@ namespace OMTK
             }
         }
 
+        private void OnDestroy()
+        {
+            if (systemTts != null)
+            {
+                systemTts.Shutdown();
+            }
+        }
+
         private void Update()
         {
             float deltaTime = Mathf.Min(Time.deltaTime, 0.05f);
+            if (systemTts != null)
+            {
+                systemTts.Tick();
+            }
+
             Audio.Tick();
             StateTime += deltaTime;
             UpdateInput(deltaTime);
@@ -145,6 +184,7 @@ namespace OMTK
 
             UpdateCamera();
             UpdateVisuals(deltaTime);
+            UpdateRadar(deltaTime);
             UpdateHud();
         }
 
@@ -161,12 +201,17 @@ namespace OMTK
             }
 
             token = null;
-            windupCooldown = 1.15f;
+            windupCooldown = narratorMode == 0 ? 1.7f : 1.15f;
             Hp--;
             damageFlash = 1f;
+            PulseHaptic();
             Audio.Play2D(Audio.HitClip, 0.95f, Random.Range(0.92f, 1.04f));
             ShowSubtitle("It found you.", 1.05f);
             promptText.text = "LISTEN";
+            if (Hp > 0)
+            {
+                Audio.Speak("Hit. " + Hp + (Hp == 1 ? " heart." : " hearts."));
+            }
 
             if (Hp <= 0)
             {
@@ -227,6 +272,7 @@ namespace OMTK
 
         private void StartRun()
         {
+            optionsOpen = false;
             Attempt = 1;
             Wave = 1;
             Hp = MaxHp;
@@ -262,7 +308,7 @@ namespace OMTK
             Wave = wave;
             Hp = Mathf.Min(MaxHp, Hp + (wave > 1 ? 1 : 0));
             ClearEnemies();
-            windupCooldown = 1.65f;
+            windupCooldown = narratorMode == 0 ? 2.55f : 1.65f;
             SetState(GameState.Playing);
 
             if (wave == 1)
@@ -319,7 +365,7 @@ namespace OMTK
             {
                 finaleFacing = true;
                 Audio.Play2D(Audio.ConductorReadyClip, 0.9f);
-                ShowSubtitle("Now. Swipe.", 1.4f);
+                Narrator("Now. Swipe.", 1.4f);
                 promptText.text = "SWIPE";
             }
 
@@ -345,8 +391,12 @@ namespace OMTK
 
             echoAnnounced = false;
             damageFlash = 1f;
+            PulseHaptic();
+            fatalClip = killer.WindupClip;
+            fatalPosition = killer.Position;
+            fatalReplayPlayed = false;
             Audio.StopVoice();
-            Audio.PlayFatal(killer.WindupClip, killer.Position);
+            Audio.PlayFatal(fatalClip, fatalPosition);
             Audio.Play2D(Audio.HeartbeatClip, 0.9f);
             ShowSubtitle("One more time.", 1.45f);
             promptText.text = string.Empty;
@@ -371,6 +421,13 @@ namespace OMTK
                 }
             }
 
+            if (!fatalReplayPlayed && StateTime >= 3.45f && fatalClip != null)
+            {
+                fatalReplayPlayed = true;
+                Audio.PlayAt(fatalClip, fatalPosition, 0.85f, 0.62f, true);
+                ShowSubtitle("Remember this.", 1.2f);
+            }
+
             if (StateTime >= 4.8f)
             {
                 Retry();
@@ -389,20 +446,23 @@ namespace OMTK
                 bool perfect = token.WindupRemaining <= PerfectWindow;
                 token.Parry(perfect);
                 token = null;
-                windupCooldown = 0.9f;
+                windupCooldown = narratorMode == 0 ? 1.3f : 0.9f;
 
                 if (perfect)
                 {
                     parryFlash = 1f;
+                    PulseHaptic();
                     Audio.Play2D(Audio.PerfectClip, 0.9f);
                     ShowSubtitle("Now. Swipe.", 1.15f);
                     promptText.text = "SWIPE";
+                    Audio.Speak("Perfect. Swipe.");
                 }
                 else
                 {
                     Audio.Play2D(Audio.ParryClip, 0.78f);
                     ShowSubtitle("Blocked. Wait for the opening.", 1.2f);
                     promptText.text = "LISTEN";
+                    Audio.Speak("Blocked. Listen.");
                 }
 
                 return;
@@ -451,6 +511,7 @@ namespace OMTK
 
             windupCooldown = 0.82f;
             parryFlash = 1f;
+            PulseHaptic();
             Audio.Play2D(Audio.SlashClip, 0.9f, Random.Range(0.96f, 1.06f));
             ShowSubtitle("One less echo.", 0.95f);
             promptText.text = "LISTEN";
@@ -478,6 +539,7 @@ namespace OMTK
             SaveProgress();
             Audio.StopConductor();
             Audio.Unduck();
+            PulseHaptic();
             Audio.Play2D(Audio.VictoryClip, 0.9f);
             Audio.Play2D(Audio.PerfectClip, 0.55f, 1.1f);
             ShowSubtitle("You remembered. One more time.", 4f);
@@ -534,6 +596,16 @@ namespace OMTK
                 {
                     HandleSwipe();
                 }
+
+                if (keyboard.oKey.wasPressedThisFrame && State == GameState.Title)
+                {
+                    ToggleOptions();
+                }
+
+                if (keyboard.escapeKey.wasPressedThisFrame && optionsOpen)
+                {
+                    ToggleOptions();
+                }
             }
 
             if (Gyroscope.current != null)
@@ -560,6 +632,39 @@ namespace OMTK
 
             Touchscreen touchscreen = Touchscreen.current;
             Mouse mouse = Mouse.current;
+
+            if (touchscreen != null)
+            {
+                int pressed = 0;
+                for (int i = 0; i < touchscreen.touches.Count; i++)
+                {
+                    if (touchscreen.touches[i].press.isPressed)
+                    {
+                        pressed++;
+                    }
+                }
+
+                if (pressed >= 2)
+                {
+                    twoFingerActive = true;
+                }
+
+                if (twoFingerActive)
+                {
+                    if (pressed == 0)
+                    {
+                        twoFingerActive = false;
+                        if (State == GameState.Title)
+                        {
+                            ToggleOptions();
+                        }
+                    }
+
+                    pointerHeld = false;
+                    return;
+                }
+            }
+
             Vector2 position = Vector2.zero;
             bool down = false;
             bool up = false;
@@ -606,6 +711,12 @@ namespace OMTK
             {
                 pointerHeld = false;
                 Vector2 delta = position - pointerStart;
+                if (State == GameState.Title && pointerTravel < 18f && delta.magnitude < 45f && pointerDownTime >= 0.75f)
+                {
+                    ToggleOptions();
+                    return;
+                }
+
                 if (pointerTravel < 18f && delta.magnitude < 45f && pointerDownTime < 0.42f)
                 {
                     HandleTap();
@@ -624,10 +735,141 @@ namespace OMTK
             PlayerYaw = Mathf.Repeat(PlayerYaw, 360f);
         }
 
+        private IEnumerator AnnounceTitle()
+        {
+            float deadline = Time.unscaledTime + 10f;
+            while (systemTts != null && !systemTts.IsReady && !systemTts.IsFailed && Time.unscaledTime < deadline)
+            {
+                yield return null;
+            }
+
+            if (State == GameState.Title && !optionsOpen)
+            {
+                Audio.Speak(BootLine);
+            }
+        }
+
+        private void LoadAccessibility()
+        {
+            narratorMode = Mathf.Clamp(PlayerPrefs.GetInt(NarratorKey, 0), 0, 2);
+            hapticsEnabled = PlayerPrefs.GetInt(HapticsKey, 1) == 1;
+        }
+
+        private void ToggleOptions()
+        {
+            if (State != GameState.Title)
+            {
+                return;
+            }
+
+            optionsOpen = !optionsOpen;
+            if (optionsOpen)
+            {
+                OpenOptions();
+            }
+            else
+            {
+                CloseOptions();
+            }
+        }
+
+        private void OpenOptions()
+        {
+            titleText.text = "OPTIONS";
+            titleText.gameObject.SetActive(true);
+            subtitleText.text = OptionsText();
+            subtitleText.color = new Color(1f, 0.9f, 0.58f, 1f);
+            subtitleUntil = 999f;
+            promptText.text = "HOLD OR TWO-FINGER TAP TO CLOSE";
+            statusText.text = "ACCESSIBILITY";
+            Audio.Speak(OptionsSpeech());
+        }
+
+        private void CloseOptions()
+        {
+            titleText.text = "ONE MORE TIME,\nKNIGHT";
+            subtitleText.text = "Turn your head.\nTap to parry. Swipe to answer.\nHold for options.";
+            subtitleText.color = new Color(1f, 0.9f, 0.58f, 1f);
+            subtitleUntil = 999f;
+            promptText.text = "TAP TO BEGIN";
+            statusText.text = "HEADPHONES ON";
+            Audio.Speak("Options closed. Tap to begin.");
+        }
+
+        private void CycleNarrator()
+        {
+            narratorMode = (narratorMode + 1) % 3;
+            Audio.SetNarratorMode(narratorMode);
+            PlayerPrefs.SetInt(NarratorKey, narratorMode);
+            PlayerPrefs.Save();
+            subtitleText.text = OptionsText();
+            if (narratorMode == 2)
+            {
+                Audio.Play2D(Audio.TickClip, 0.55f);
+            }
+            else
+            {
+                Audio.Speak("Narrator " + NarratorName().ToLowerInvariant() + ".");
+            }
+        }
+
+        private void ToggleHaptics()
+        {
+            hapticsEnabled = !hapticsEnabled;
+            PlayerPrefs.SetInt(HapticsKey, hapticsEnabled ? 1 : 0);
+            PlayerPrefs.Save();
+            subtitleText.text = OptionsText();
+            PulseHaptic();
+            Audio.Speak("Haptics " + (hapticsEnabled ? "on." : "off."));
+        }
+
+        private string OptionsText()
+        {
+            return "NARRATOR: " + NarratorName() + "\nHAPTICS: " + (hapticsEnabled ? "ON" : "OFF") + "\nTAP: NARRATOR\nSWIPE: HAPTICS";
+        }
+
+        private string OptionsSpeech()
+        {
+            return "Options. Narrator " + NarratorName().ToLowerInvariant() + ". Haptics " + (hapticsEnabled ? "on" : "off") + ". Tap to change narrator. Swipe to toggle haptics. Hold or two-finger tap to close.";
+        }
+
+        private string NarratorName()
+        {
+            if (narratorMode == 1)
+            {
+                return "SYNTH";
+            }
+
+            if (narratorMode == 2)
+            {
+                return "OFF";
+            }
+
+            return "SYSTEM";
+        }
+
+        private void PulseHaptic()
+        {
+            if (!hapticsEnabled)
+            {
+                return;
+            }
+
+#if UNITY_ANDROID || UNITY_IOS
+            Handheld.Vibrate();
+#endif
+        }
+
         private void HandleTap()
         {
             if (State == GameState.Title)
             {
+                if (optionsOpen)
+                {
+                    CycleNarrator();
+                    return;
+                }
+
                 StartRun();
             }
             else if (State == GameState.Intro && StateTime > 0.55f)
@@ -660,6 +902,12 @@ namespace OMTK
         {
             if (State == GameState.Title)
             {
+                if (optionsOpen)
+                {
+                    ToggleHaptics();
+                    return;
+                }
+
                 StartRun();
             }
             else if (State == GameState.Intro && StateTime > 0.55f)
@@ -685,7 +933,7 @@ namespace OMTK
             if (!finaleFacing)
             {
                 Audio.Play2D(Audio.WhiffClip, 0.45f);
-                ShowSubtitle("Turn toward the voice.", 1.2f);
+                Narrator("Turn toward the voice.", 1.2f);
                 promptText.text = "TURN";
                 return;
             }
@@ -697,6 +945,10 @@ namespace OMTK
         {
             State = state;
             StateTime = 0f;
+            if (state == GameState.Playing)
+            {
+                radarPingTimer = narratorMode == 0 ? 2.8f : 1.8f;
+            }
 
             if (titleText == null)
             {
@@ -759,6 +1011,184 @@ namespace OMTK
             }
         }
 
+        private void UpdateRadar(float deltaTime)
+        {
+            if (radarDial == null)
+            {
+                return;
+            }
+
+            bool active = State == GameState.Playing || State == GameState.Finale || State == GameState.Death;
+            Color dialColor = State == GameState.Finale
+                ? new Color(1f, 0.56f, 0.38f, active ? 0.28f : 0.1f)
+                : State == GameState.Death
+                    ? new Color(1f, 0.34f, 0.28f, active ? 0.25f : 0.1f)
+                    : new Color(0.64f, 0.84f, 1f, active ? 0.24f : 0.1f);
+            radarDial.color = dialColor;
+            radarDial.rectTransform.localScale = Vector3.one * (1f + ringPulse * 0.015f);
+
+            if (radarReadout != null)
+            {
+                float heading = Mathf.Repeat(PlayerYaw, 360f);
+                radarReadout.text = "HDG " + Mathf.RoundToInt(heading).ToString("000") + "°";
+                radarReadout.color = new Color(0.72f, 0.84f, 0.95f, active ? 0.58f : 0.32f);
+            }
+
+            if (radarLabels != null)
+            {
+                Color labelColor = new Color(0.72f, 0.84f, 0.95f, active ? 0.38f : 0.16f);
+                for (int i = 0; i < radarLabels.Length; i++)
+                {
+                    radarLabels[i].color = labelColor;
+                }
+            }
+
+            for (int i = 0; i < RadarBlipCount; i++)
+            {
+                if (radarBlipRoots[i] != null)
+                {
+                    radarBlipRoots[i].gameObject.SetActive(false);
+                }
+            }
+
+            if (State == GameState.Playing)
+            {
+                int used = 0;
+                for (int i = 0; i < enemies.Count && used < RadarBlipCount; i++)
+                {
+                    OMTKEnemy enemy = enemies[i];
+                    if (enemy == null || !enemy.IsAlive)
+                    {
+                        continue;
+                    }
+
+                    ShowRadarBlip(used, enemy.Azimuth, enemy.Distance, enemy.IsWindingUp, RadarColor(enemy.Variant), enemy.IsStaggered);
+                    used++;
+                }
+            }
+            else if (State == GameState.Finale)
+            {
+                ShowRadarBlip(0, 180f, 4f, finaleFacing, new Color(1f, 0.58f, 0.32f), false);
+            }
+            else if (State == GameState.Death && fatalClip != null)
+            {
+                float fatalAzimuth = Mathf.Atan2(fatalPosition.x, fatalPosition.z) * Mathf.Rad2Deg;
+                ShowRadarBlip(0, fatalAzimuth, fatalPosition.magnitude, StateTime >= 3.45f, new Color(1f, 0.28f, 0.22f), false);
+            }
+
+            UpdateRadarAudio(deltaTime);
+        }
+
+        private void UpdateRadarAudio(float deltaTime)
+        {
+            if (State != GameState.Playing)
+            {
+                return;
+            }
+
+            radarPingTimer -= deltaTime;
+            if (radarPingTimer > 0f)
+            {
+                return;
+            }
+
+            OMTKEnemy nearest = null;
+            float nearestDistance = float.MaxValue;
+            for (int i = 0; i < enemies.Count; i++)
+            {
+                OMTKEnemy enemy = enemies[i];
+                if (enemy == null || !enemy.IsAlive)
+                {
+                    continue;
+                }
+
+                if (enemy.IsWindingUp)
+                {
+                    nearest = enemy;
+                    nearestDistance = enemy.Distance;
+                    break;
+                }
+
+                if (enemy.Distance < nearestDistance)
+                {
+                    nearest = enemy;
+                    nearestDistance = enemy.Distance;
+                }
+            }
+
+            if (nearest == null)
+            {
+                radarPingTimer = 1.2f;
+                return;
+            }
+
+            float proximity = 1f - Mathf.Clamp01((nearestDistance - 2.2f) / 8f);
+            radarPingTimer = Mathf.Lerp(1.35f, 2.1f, proximity);
+            Audio.PlayAt(Audio.RadarPingClip, nearest.Position, 0.06f + 0.07f * proximity, 1f + 0.08f * (1f - proximity));
+        }
+
+        private void ShowRadarBlip(int index, float azimuth, float distance, bool winding, Color color, bool staggered)
+        {
+            if (index < 0 || index >= RadarBlipCount || radarBlipRoots[index] == null || radarBlipCores[index] == null || radarBlipGlows[index] == null)
+            {
+                return;
+            }
+
+            float relative = Mathf.DeltaAngle(PlayerYaw, azimuth);
+            float radians = relative * Mathf.Deg2Rad;
+            RectTransform root = radarBlipRoots[index];
+            root.gameObject.SetActive(true);
+            root.anchoredPosition = new Vector2(Mathf.Sin(radians), Mathf.Cos(radians)) * 184f;
+            root.localRotation = Quaternion.Euler(0f, 0f, 180f - relative);
+
+            float proximity = 1f - Mathf.Clamp01((distance - 2.2f) / 8f);
+            float pulse = 0.5f + 0.5f * Mathf.Sin(Time.unscaledTime * 3.2f + index * 1.7f);
+            float urgency = winding ? 0.7f + 0.3f * Mathf.Sin(Time.unscaledTime * 12f) : 0.55f + 0.2f * pulse;
+            if (staggered)
+            {
+                urgency *= 0.45f;
+            }
+
+            Image core = radarBlipCores[index];
+            Color coreColor = color;
+            coreColor.a = Mathf.Clamp01(0.52f + 0.38f * proximity + (winding ? 0.12f * urgency : 0f));
+            if (staggered)
+            {
+                coreColor.a *= 0.55f;
+            }
+
+            core.color = coreColor;
+            float coreScale = 0.9f + 0.22f * proximity + (winding ? 0.28f * urgency : 0f);
+            core.rectTransform.localScale = new Vector3(coreScale, coreScale, 1f);
+
+            Image glow = radarBlipGlows[index];
+            Color glowColor = color;
+            glowColor.a = Mathf.Clamp01(0.08f + 0.2f * proximity + 0.08f * urgency);
+            if (staggered)
+            {
+                glowColor.a *= 0.6f;
+            }
+
+            glow.color = glowColor;
+            float glowScale = 1.15f + 0.35f * proximity + 0.25f * urgency;
+            glow.rectTransform.localScale = new Vector3(glowScale, glowScale, 1f);
+        }
+
+        private static Color RadarColor(EnemyVariant variant)
+        {
+            if (variant == EnemyVariant.Charger)
+            {
+                return new Color(1f, 0.58f, 0.32f);
+            }
+
+            if (variant == EnemyVariant.Conjurer)
+            {
+                return new Color(0.78f, 0.56f, 1f);
+            }
+
+            return new Color(0.58f, 0.88f, 1f);
+        }
+
         private void UpdateHud()
         {
             if (statusText == null)
@@ -768,7 +1198,8 @@ namespace OMTK
 
             if (State == GameState.Title)
             {
-                statusText.text = "HEADPHONES ON";
+                bool preparingVoice = systemTts != null && !systemTts.IsReady && !systemTts.IsFailed;
+                statusText.text = optionsOpen ? "ACCESSIBILITY" : preparingVoice ? "PREPARING VOICE" : "HEADPHONES ON";
             }
             else if (State == GameState.Finale)
             {
@@ -912,7 +1343,52 @@ namespace OMTK
             ring.rectTransform.anchoredPosition = Vector2.zero;
             ring.rectTransform.sizeDelta = new Vector2(440f, 440f);
 
-            statusText = CreateText("Status", canvasObject.transform, 28, new Color(0.78f, 0.84f, 0.9f, 0.86f), TextAnchor.UpperLeft);
+            radarDial = CreateImage("Radar Dial", canvasObject.transform, new Color(0.68f, 0.86f, 0.96f, 0.18f));
+            radarDial.sprite = CreateRadarDialSprite();
+            radarDial.preserveAspect = true;
+            CenterRect(radarDial.rectTransform);
+            radarDial.rectTransform.sizeDelta = new Vector2(440f, 440f);
+
+            radarBlipRoots = new RectTransform[RadarBlipCount];
+            radarBlipCores = new Image[RadarBlipCount];
+            radarBlipGlows = new Image[RadarBlipCount];
+            Sprite coreSprite = CreateRadarBlipSprite(true);
+            Sprite glowSprite = CreateRadarBlipSprite(false);
+            for (int i = 0; i < RadarBlipCount; i++)
+            {
+                GameObject blipObject = new GameObject("Radar Blip " + i, typeof(RectTransform));
+                blipObject.transform.SetParent(canvasObject.transform, false);
+                RectTransform blipRoot = blipObject.GetComponent<RectTransform>();
+                CenterRect(blipRoot);
+                blipRoot.sizeDelta = Vector2.zero;
+
+                Image glow = CreateImage("Glow", blipRoot, new Color(1f, 1f, 1f, 0f));
+                glow.sprite = glowSprite;
+                glow.preserveAspect = true;
+                CenterRect(glow.rectTransform);
+                glow.rectTransform.sizeDelta = new Vector2(72f, 72f);
+
+                Image core = CreateImage("Core", blipRoot, new Color(1f, 1f, 1f, 0f));
+                core.sprite = coreSprite;
+                core.preserveAspect = true;
+                CenterRect(core.rectTransform);
+                core.rectTransform.sizeDelta = new Vector2(26f, 26f);
+
+                radarBlipRoots[i] = blipRoot;
+                radarBlipGlows[i] = glow;
+                radarBlipCores[i] = core;
+                blipObject.SetActive(false);
+            }
+
+            string[] radarLabelText = { "000°", "090°", "180°", "270°" };
+            RadarLabels(radarLabelText, canvasObject.transform);
+
+            radarReadout = CreateText("Radar Heading", canvasObject.transform, 22, new Color(0.72f, 0.84f, 0.95f, 0.5f), TextAnchor.MiddleCenter);
+            CenterRect(radarReadout.rectTransform);
+            radarReadout.rectTransform.sizeDelta = new Vector2(240f, 40f);
+            radarReadout.text = "HDG 000°";
+
+            statusText = CreateText("Status", canvasObject.transform, 32, new Color(0.78f, 0.84f, 0.9f, 0.86f), TextAnchor.UpperLeft);
             statusText.rectTransform.anchorMin = new Vector2(0f, 1f);
             statusText.rectTransform.anchorMax = new Vector2(0f, 1f);
             statusText.rectTransform.pivot = new Vector2(0f, 1f);
@@ -936,7 +1412,7 @@ namespace OMTK
             subtitleText.rectTransform.anchoredPosition = new Vector2(0f, 110f);
             subtitleText.rectTransform.sizeDelta = new Vector2(1000f, 270f);
 
-            promptText = CreateText("Prompt", canvasObject.transform, 32, new Color(0.9f, 0.95f, 1f, 0.9f), TextAnchor.MiddleCenter);
+            promptText = CreateText("Prompt", canvasObject.transform, 36, new Color(0.9f, 0.95f, 1f, 0.9f), TextAnchor.MiddleCenter);
             promptText.rectTransform.anchorMin = new Vector2(0.5f, 0.25f);
             promptText.rectTransform.anchorMax = new Vector2(0.5f, 0.25f);
             promptText.rectTransform.pivot = new Vector2(0.5f, 0.5f);
@@ -976,6 +1452,29 @@ namespace OMTK
             return font;
         }
 
+        private void RadarLabels(string[] labels, Transform parent)
+        {
+            radarLabels = new Text[labels.Length];
+            for (int i = 0; i < labels.Length; i++)
+            {
+                float angle = i * 90f * Mathf.Deg2Rad;
+                Text label = CreateText("Radar Label " + i, parent, 22, new Color(0.72f, 0.84f, 0.95f, 0.38f), TextAnchor.MiddleCenter);
+                CenterRect(label.rectTransform);
+                label.rectTransform.anchoredPosition = new Vector2(Mathf.Sin(angle), Mathf.Cos(angle)) * 248f;
+                label.rectTransform.sizeDelta = new Vector2(90f, 36f);
+                label.text = labels[i];
+                radarLabels[i] = label;
+            }
+        }
+
+        private void CenterRect(RectTransform rect)
+        {
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = Vector2.zero;
+        }
+
         private Text CreateText(string name, Transform parent, int size, Color color, TextAnchor alignment)
         {
             GameObject go = new GameObject(name);
@@ -1012,6 +1511,105 @@ namespace OMTK
             rect.anchorMax = Vector2.one;
             rect.offsetMin = Vector2.zero;
             rect.offsetMax = Vector2.zero;
+        }
+
+        private Sprite CreateRadarDialSprite()
+        {
+            int size = 256;
+            Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            texture.wrapMode = TextureWrapMode.Clamp;
+            texture.filterMode = FilterMode.Bilinear;
+            Color32[] pixels = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float nx = (x + 0.5f) / size * 2f - 1f;
+                    float ny = (y + 0.5f) / size * 2f - 1f;
+                    float radius = Mathf.Sqrt(nx * nx + ny * ny);
+                    float angle = Mathf.Atan2(nx, ny) * Mathf.Rad2Deg;
+                    if (angle < 0f)
+                    {
+                        angle += 360f;
+                    }
+
+                    float alpha = 0f;
+                    alpha += Mathf.Exp(-Mathf.Pow((radius - 0.965f) / 0.006f, 2f)) * 0.45f;
+                    alpha += Mathf.Exp(-Mathf.Pow((radius - 0.55f) / 0.006f, 2f)) * 0.08f;
+
+                    float nearest = Mathf.Round(angle / 15f) * 15f;
+                    float nearest45 = Mathf.Abs(Mathf.Repeat(nearest, 45f));
+                    float tickDiff = Mathf.Abs(Mathf.DeltaAngle(angle, nearest));
+                    bool cardinal = Mathf.Min(Mathf.Abs(Mathf.Repeat(nearest, 90f)), Mathf.Abs(Mathf.Repeat(nearest, 90f) - 90f)) < 0.1f;
+                    bool diagonal = Mathf.Min(nearest45, Mathf.Abs(nearest45 - 45f)) < 0.1f;
+                    float tickStrength = cardinal ? 1f : diagonal ? 0.62f : 0.28f;
+                    float tickStart = cardinal ? 0.8f : diagonal ? 0.87f : 0.91f;
+                    if (tickDiff < 0.6f && radius > tickStart && radius < 0.955f)
+                    {
+                        alpha = Mathf.Max(alpha, tickStrength * 0.5f);
+                    }
+
+                    float axisDiff = Mathf.Min(
+                        Mathf.Abs(Mathf.DeltaAngle(angle, 0f)),
+                        Mathf.Min(
+                            Mathf.Abs(Mathf.DeltaAngle(angle, 90f)),
+                            Mathf.Min(Mathf.Abs(Mathf.DeltaAngle(angle, 180f)), Mathf.Abs(Mathf.DeltaAngle(angle, 270f)))));
+                    if (axisDiff < 0.18f && radius < 0.78f)
+                    {
+                        alpha += 0.035f;
+                    }
+
+                    alpha = Mathf.Clamp01(alpha);
+                    pixels[y * size + x] = new Color32(255, 255, 255, (byte)(alpha * 255f));
+                }
+            }
+
+            texture.SetPixels32(pixels);
+            texture.Apply();
+            return Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), 100f);
+        }
+
+        private Sprite CreateRadarBlipSprite(bool core)
+        {
+            int size = 64;
+            Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            texture.wrapMode = TextureWrapMode.Clamp;
+            texture.filterMode = FilterMode.Bilinear;
+            Color32[] pixels = new Color32[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float nx = (x + 0.5f) / size * 2f - 1f;
+                    float ny = (y + 0.5f) / size * 2f - 1f;
+                    float alpha;
+                    if (core)
+                    {
+                        float tip = 0.82f;
+                        float baseY = -0.58f;
+                        float halfWidth = 0.44f * (tip - ny) / (tip - baseY);
+                        bool inside = ny >= baseY && ny <= tip && Mathf.Abs(nx) <= halfWidth;
+                        if (ny < baseY + 0.16f && Mathf.Abs(nx) < 0.12f)
+                        {
+                            inside = false;
+                        }
+
+                        alpha = inside ? 1f : 0f;
+                    }
+                    else
+                    {
+                        float radius = Mathf.Sqrt(nx * nx + ny * ny);
+                        alpha = Mathf.Clamp01(1f - radius / 0.95f);
+                        alpha = alpha * alpha * 0.9f;
+                    }
+
+                    pixels[y * size + x] = new Color32(255, 255, 255, (byte)(alpha * 255f));
+                }
+            }
+
+            texture.SetPixels32(pixels);
+            texture.Apply();
+            return Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), 100f);
         }
 
         private Sprite CreateRingSprite()

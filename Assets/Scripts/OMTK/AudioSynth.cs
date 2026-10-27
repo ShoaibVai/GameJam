@@ -72,14 +72,39 @@ namespace OMTK
 
         public static AudioClip Drone()
         {
-            float duration = 8f;
-            float[] data = Buffer(duration);
-            AddPulseTone(data, 55f, duration, 0.1f, Wave.Sine, 0.125f);
-            AddPulseTone(data, 82.5f, duration, 0.055f, Wave.Triangle, 0.25f);
-            AddPulseTone(data, 110f, duration, 0.04f, Wave.Sine, 0.125f);
-            AddPulseTone(data, 165f, duration, 0.018f, Wave.Sine, 0.25f);
-            Normalize(data, 0.7f);
-            return Make("drone", data);
+            float[] data = Buffer(17f);
+            AddNoiseBed(data, 0f, 16f, 0.018f, 850f, 2.5f, 2.5f, 0.09f);
+            AddChord(data, 0f, 4.6f, new[] { 45, 52, 57, 60, 64 }, 0.085f, 0.9f, 1.6f, 0.0015f);
+            AddChord(data, 4f, 4.6f, new[] { 41, 48, 53, 57, 60, 64 }, 0.08f, 1.1f, 1.8f, 0.0012f);
+            AddChord(data, 8f, 4.6f, new[] { 38, 45, 50, 53, 57, 64 }, 0.08f, 1.1f, 1.8f, 0.0014f);
+            AddChord(data, 12f, 4.6f, new[] { 40, 47, 52, 56, 59, 64 }, 0.085f, 0.9f, 1.6f, 0.0013f);
+            AddBell(data, Midi(69), 1.3f, 0.06f, 2.4f);
+            AddBell(data, Midi(72), 3.1f, 0.045f, 2f);
+            AddBell(data, Midi(76), 5.2f, 0.055f, 2.2f);
+            AddBell(data, Midi(72), 7f, 0.04f, 1.9f);
+            AddBell(data, Midi(74), 9.2f, 0.055f, 2.3f);
+            AddBell(data, Midi(77), 11f, 0.04f, 1.8f);
+            AddBell(data, Midi(71), 13.2f, 0.055f, 2.2f);
+            AddBell(data, Midi(68), 14.8f, 0.045f, 1.9f);
+            ApplyReverb(data, 0.32f, 0.72f, true);
+            Normalize(data, 0.8f);
+            return Make("drone", LoopCrossfade(data, 16f, 1f));
+        }
+
+        public static AudioClip Tension()
+        {
+            float[] data = Buffer(9f);
+            AddPulseTone(data, 41.2f, 8f, 0.09f, Wave.Sine, 0.5f);
+            AddPulseTone(data, 55f, 8f, 0.035f, Wave.Triangle, 0.25f);
+            AddTone(data, Midi(56), 0f, 8f, 0.024f, Wave.Triangle, 2f, 2f, 3.2f, 0.002f);
+            AddTone(data, Midi(57), 0f, 8f, 0.02f, Wave.Sine, 2.5f, 2.5f, 3.6f, 0.002f);
+            AddTone(data, Midi(63), 0f, 8f, 0.01f, Wave.Sine, 3f, 3f, 2.8f, 0.003f);
+            AddNoiseBed(data, 0f, 8f, 0.01f, 1200f, 2f, 2f, 0.18f);
+            AddBell(data, Midi(80), 1.8f, 0.016f, 3f);
+            AddBell(data, Midi(81), 4.8f, 0.012f, 3f);
+            ApplyReverb(data, 0.32f, 0.7f, true);
+            Normalize(data, 0.62f);
+            return Make("tension", LoopCrossfade(data, 8f, 1f));
         }
 
         public static AudioClip ConductorHum()
@@ -269,6 +294,129 @@ namespace OMTK
             Normalize(data, 0.65f);
             FadeEdges(data, 0.008f);
             return Make("conductor_ready", data);
+        }
+
+        public static AudioClip RadarPing()
+        {
+            float[] data = Buffer(0.24f);
+            AddSweep(data, 1560f, 1040f, 0f, 0.22f, 0.16f, Wave.Sine, 0.005f, 0.2f);
+            AddDecayTone(data, 2340f, 0.002f, 0.13f, 0.035f, Wave.Sine, 0.002f, 0.04f);
+            Normalize(data, 0.5f);
+            FadeEdges(data, 0.004f);
+            return Make("radar_ping", data);
+        }
+
+        private static float Midi(int note)
+        {
+            return 440f * Mathf.Pow(2f, (note - 69) / 12f);
+        }
+
+        private static void AddChord(float[] data, float start, float duration, int[] notes, float amplitude, float attack, float release, float detune)
+        {
+            for (int i = 0; i < notes.Length; i++)
+            {
+                float frequency = Midi(notes[i]);
+                AddTone(data, frequency * (1f - detune), start, duration, amplitude, Wave.Triangle, attack, release, 4.2f + i * 0.05f, 0.002f);
+                AddTone(data, frequency * (1f + detune), start, duration, amplitude * 0.6f, Wave.Sine, attack, release, 4f + i * 0.04f, 0.0015f);
+                AddTone(data, frequency * 2f, start, duration, amplitude * 0.12f, Wave.Sine, attack, release, 3.7f, 0.001f);
+                if (i == 0)
+                {
+                    AddTone(data, frequency * 0.5f, start, duration, amplitude * 0.55f, Wave.Sine, attack, release);
+                }
+            }
+        }
+
+        private static void AddDecayTone(float[] data, float frequency, float start, float duration, float amplitude, Wave wave, float attack, float decay, float vibratoFrequency = 0f, float vibratoDepth = 0f)
+        {
+            int startSample = Mathf.Clamp(Mathf.RoundToInt(start * OMTKConfig.SampleRate), 0, data.Length - 1);
+            int endSample = Mathf.Clamp(startSample + Mathf.RoundToInt(duration * OMTKConfig.SampleRate), 0, data.Length);
+            float phase = 0f;
+            for (int i = startSample; i < endSample; i++)
+            {
+                float time = (i - startSample) / (float)OMTKConfig.SampleRate;
+                float envelope = (attack <= 0f ? 1f : Mathf.Clamp01(time / attack)) * Mathf.Exp(-time / Mathf.Max(0.001f, decay));
+                envelope *= Mathf.Clamp01((duration - time) / 0.02f);
+                float modulation = vibratoDepth * Mathf.Sin(time * vibratoFrequency * Mathf.PI * 2f);
+                phase += frequency * (1f + modulation) / OMTKConfig.SampleRate;
+                phase -= Mathf.Floor(phase);
+                data[i] += WaveSample(wave, phase) * amplitude * envelope;
+            }
+        }
+
+        private static void AddBell(float[] data, float frequency, float start, float amplitude, float duration)
+        {
+            AddDecayTone(data, frequency, start, duration, amplitude, Wave.Sine, 0.003f, duration * 0.45f);
+            AddDecayTone(data, frequency * 2.01f, start, duration * 0.9f, amplitude * 0.35f, Wave.Sine, 0.002f, duration * 0.35f);
+            AddDecayTone(data, frequency * 2.99f, start, duration * 0.7f, amplitude * 0.18f, Wave.Sine, 0.002f, duration * 0.28f);
+            AddDecayTone(data, frequency * 4.18f, start, duration * 0.5f, amplitude * 0.08f, Wave.Sine, 0.002f, duration * 0.2f);
+        }
+
+        private static void AddNoiseBed(float[] data, float start, float duration, float amplitude, float cutoff, float attack, float release, float modulationFrequency)
+        {
+            int startSample = Mathf.Clamp(Mathf.RoundToInt(start * OMTKConfig.SampleRate), 0, data.Length - 1);
+            int endSample = Mathf.Clamp(startSample + Mathf.RoundToInt(duration * OMTKConfig.SampleRate), 0, data.Length);
+            System.Random rng = new System.Random(startSample + 117);
+            float filtered = 0f;
+            float alpha = 1f - Mathf.Exp(-2f * Mathf.PI * cutoff / OMTKConfig.SampleRate);
+            for (int i = startSample; i < endSample; i++)
+            {
+                float time = (i - startSample) / (float)OMTKConfig.SampleRate;
+                float noise = (float)(rng.NextDouble() * 2.0 - 1.0);
+                filtered += alpha * (noise - filtered);
+                float modulation = 0.65f + 0.35f * Mathf.Sin(time * modulationFrequency * Mathf.PI * 2f + 0.7f);
+                float envelope = Envelope(time, duration, attack, release);
+                data[i] += filtered * amplitude * envelope * modulation;
+            }
+        }
+
+        private static void ApplyReverb(float[] data, float wet, float decay, bool wrap)
+        {
+            int length = data.Length;
+            int tail = wrap ? Mathf.Min(OMTKConfig.SampleRate, length / 2) : 0;
+            int total = length + tail;
+            float[] wetData = new float[length];
+            int[] delays = { 1557, 1617, 1491, 1422 };
+            for (int c = 0; c < delays.Length; c++)
+            {
+                int delay = delays[c];
+                float[] buffer = new float[delay];
+                float low = 0f;
+                int index = 0;
+                for (int i = 0; i < total; i++)
+                {
+                    float input = i < length ? data[i] : 0f;
+                    float delayed = buffer[index];
+                    low += 0.38f * (delayed - low);
+                    buffer[index] = input + low * decay;
+                    int outIndex = i < length ? i : i - length;
+                    wetData[outIndex] += delayed * 0.25f;
+                    index++;
+                    if (index >= delay)
+                    {
+                        index = 0;
+                    }
+                }
+            }
+
+            for (int i = 0; i < length; i++)
+            {
+                data[i] = data[i] * (1f - wet * 0.55f) + wetData[i] * wet;
+            }
+        }
+
+        private static float[] LoopCrossfade(float[] data, float loopDuration, float fadeDuration)
+        {
+            int loopSamples = Mathf.Clamp(Mathf.RoundToInt(loopDuration * OMTKConfig.SampleRate), 1, data.Length);
+            int fadeSamples = Mathf.Clamp(Mathf.RoundToInt(fadeDuration * OMTKConfig.SampleRate), 0, data.Length - loopSamples);
+            float[] result = new float[loopSamples];
+            Array.Copy(data, result, loopSamples);
+            for (int i = 0; i < fadeSamples; i++)
+            {
+                float t = i / (float)Mathf.Max(1, fadeSamples);
+                result[i] = data[i] * t + data[loopSamples + i] * (1f - t);
+            }
+
+            return result;
         }
 
         private static float[] Buffer(float duration)

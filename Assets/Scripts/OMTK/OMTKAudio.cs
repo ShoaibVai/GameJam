@@ -14,6 +14,8 @@ namespace OMTK
         private float musicLevel = 0.2f;
         private float duckCurrent = 1f;
         private float duckTarget = 1f;
+        private OMTKSystemTts systemTts;
+        private int narratorMode;
         private readonly Dictionary<string, AudioClip> voiceCache = new Dictionary<string, AudioClip>();
 
         public AudioClip WindupStalker { get; private set; }
@@ -35,6 +37,7 @@ namespace OMTK
         public AudioClip VictoryClip { get; private set; }
         public AudioClip TickClip { get; private set; }
         public AudioClip ConductorReadyClip { get; private set; }
+        public AudioClip RadarPingClip { get; private set; }
 
         public void Init(GameObject owner)
         {
@@ -66,6 +69,7 @@ namespace OMTK
             VictoryClip = AudioSynth.Victory();
             TickClip = AudioSynth.Tick();
             ConductorReadyClip = AudioSynth.ConductorReady();
+            RadarPingClip = AudioSynth.RadarPing();
         }
 
         public AudioClip Windup(EnemyVariant variant)
@@ -113,8 +117,37 @@ namespace OMTK
             }
         }
 
+        public void SetSystemTts(OMTKSystemTts tts)
+        {
+            systemTts = tts;
+        }
+
+        public void SetNarratorMode(int mode)
+        {
+            narratorMode = Mathf.Clamp(mode, 0, 2);
+            if (narratorMode != 0 && systemTts != null)
+            {
+                systemTts.Stop();
+            }
+        }
+
         public void Speak(string text)
         {
+            if (string.IsNullOrEmpty(text) || narratorMode == 2)
+            {
+                return;
+            }
+
+            if (narratorMode == 0 && systemTts != null && systemTts.Speak(text))
+            {
+                if (voice != null)
+                {
+                    voice.Stop();
+                }
+
+                return;
+            }
+
             if (voice == null)
             {
                 return;
@@ -134,6 +167,11 @@ namespace OMTK
 
         public void StopVoice()
         {
+            if (systemTts != null)
+            {
+                systemTts.Stop();
+            }
+
             if (voice != null)
             {
                 voice.Stop();
@@ -176,7 +214,7 @@ namespace OMTK
                 filter.cutoffFrequency = 1600f;
             }
             source.PlayOneShot(clip);
-            Object.Destroy(go, clip.length + 0.15f);
+            Object.Destroy(go, clip.length / Mathf.Max(0.01f, Mathf.Abs(source.pitch)) + 0.15f);
         }
 
         public void PlayFatal(AudioClip clip, Vector3 position)
