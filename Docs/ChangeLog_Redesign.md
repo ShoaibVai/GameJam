@@ -131,3 +131,16 @@ This log records implementation work against the acoustic redesign specification
 - **Playtests:** Recenter behavior, heading/HP announcements, two-finger gesture separation, and volume persistence are scheduled for Tier 4.
 - **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
 - **Deviations/deferred work:** Two-finger tap no longer opens the title options menu; the documented single-finger hold remains the options entry point. This avoids conflicting with the required accessibility gesture. Device audio, haptics, and TTS behavior have not been verified in this environment.
+
+## Tier 1 closure — remove permanent combat advantages
+
+- **Status:** Implemented; playtest verification pending.
+- **Behavior implemented:**
+  - Legacy Echo unlocks no longer alter perfect-window width, perfect-angle width, enemy windup duration, or maximum HP.
+  - Maximum HP is fixed at `3`.
+  - `HasEcho` always returns false; legacy `OMTK_EchoMask` is deleted on load and no new Echo bonuses are granted.
+  - Deaths still increment for statistics and best-wave tracking, but repeated deaths grant no combat advantage.
+- **Files changed:** `Assets/Scripts/OMTK/OMTKGame.cs`.
+- **Playtests:** Covered by the Tier 1 test suite (`hp stays 3`, no Echo-granted width/windup changes).
+- **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported.
+- **Deviations/deferred work:** Codex discovery/mastery and the interactive death rehearsal remain scheduled for Tier 3. Echo unlock narration is currently suppressed so no unusable bonus is advertised.

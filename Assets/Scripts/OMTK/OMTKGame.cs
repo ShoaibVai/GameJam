@@ -35,17 +35,17 @@ namespace OMTK
 
         public float WindupScale
         {
-            get { return HasEcho(EchoId.Stillness) ? 1.16f : 1f; }
+            get { return 1f; }
         }
 
         public float PerfectWindow
         {
-            get { return HasEcho(EchoId.Grace) ? OMTKConfig.GracePerfectWindow : OMTKConfig.PerfectWindow; }
+            get { return OMTKConfig.PerfectWindow; }
         }
 
         public float PerfectParryAngle
         {
-            get { return HasEcho(EchoId.Grace) ? OMTKConfig.GracePerfectParryAngle : OMTKConfig.PerfectParryAngle; }
+            get { return OMTKConfig.PerfectParryAngle; }
         }
 
         public float GuardLockoutRemaining
@@ -250,7 +250,7 @@ namespace OMTK
 
         public bool HasEcho(EchoId id)
         {
-            return (EchoMask & OMTKConfig.EchoBit(id)) != 0;
+            return false;
         }
 
         public void EnemyAttack(OMTKEnemy enemy)
@@ -1812,16 +1812,8 @@ namespace OMTK
         {
             Deaths = PlayerPrefs.GetInt(DeathsKey, 0);
             BestWave = PlayerPrefs.GetInt(BestWaveKey, 0);
-            EchoMask = PlayerPrefs.GetInt(EchoKey, 0);
-            for (int i = 0; i < OMTKConfig.AllEchoes.Length; i++)
-            {
-                EchoId id = OMTKConfig.AllEchoes[i];
-                if (Deaths >= OMTKConfig.RequiredDeaths(id))
-                {
-                    EchoMask |= OMTKConfig.EchoBit(id);
-                }
-            }
-
+            EchoMask = 0;
+            PlayerPrefs.DeleteKey(EchoKey);
             RecalculateMaxHp();
         }
 
@@ -1835,24 +1827,12 @@ namespace OMTK
 
         private EchoId? UnlockNextEcho()
         {
-            for (int i = 0; i < OMTKConfig.AllEchoes.Length; i++)
-            {
-                EchoId id = OMTKConfig.AllEchoes[i];
-                if (!HasEcho(id) && Deaths >= OMTKConfig.RequiredDeaths(id))
-                {
-                    EchoMask |= OMTKConfig.EchoBit(id);
-                    RecalculateMaxHp();
-                    SaveProgress();
-                    return id;
-                }
-            }
-
             return null;
         }
 
         private void RecalculateMaxHp()
         {
-            MaxHp = OMTKConfig.BaseMaxHp + (HasEcho(EchoId.Iron) ? 1 : 0);
+            MaxHp = OMTKConfig.BaseMaxHp;
         }
 
         private void CreateCamera()
