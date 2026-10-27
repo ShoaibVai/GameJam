@@ -530,7 +530,9 @@ namespace OMTK
             OMTKEnemy staggered = FindStaggered();
             if (staggered != null)
             {
-                KillEnemy(staggered);
+                Audio.Play2D(Audio.WhiffClip, 0.3f);
+                ShowSubtitle("Swipe to strike the opening.", 0.8f);
+                promptText.text = "SWIPE";
                 return;
             }
 
