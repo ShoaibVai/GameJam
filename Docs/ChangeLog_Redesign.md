@@ -4,7 +4,7 @@ This log records implementation work against the acoustic redesign specification
 
 ## Tier 1.1 — Directional Parry Grades and Tinnitus
 
-- **Status:** Implemented; playtest verification pending.
+- **Status:** Implemented; Tier 1 runtime suite passing.
 - **Behavior implemented:**
   - Parry attempts are graded as perfect, standard, or glancing using the player's facing and the remaining windup.
   - Perfect parries require a valid angle, a valid timing window, and a stable resonance lock.
@@ -26,13 +26,13 @@ This log records implementation work against the acoustic redesign specification
   - `TinnitusFrequency = 900f`
   - `TinnitusDuration = 0.8f`
   - `PerfectStaggerDuration = 1.2f`
-- **Playtests:** The harness now faces the token before tapping and faces staggered enemies before swiping. Full boundary coverage remains scheduled for Tier 4.
-- **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
-- **Deviations/deferred work:** The required automated perfect/standard/glancing boundary tests are deferred to Tier 4.
+- **Playtests:** Tier 1 suite covers 18°/35°/40° boundaries, perfect-window timing, lock-required perfects, and phrase stabilization.
+- **Build/test result:** Compile check and Linux build passed; Tier 1 runtime suite passed 56/56 tests; headless smoke run reached Victory at 3 HP.
+- **Deviations/deferred work:** Automated boundary coverage is now implemented in `OMTKPlaytest`; device feel remains to be validated.
 
 ## Tier 1.2 — Separate Tap Parry from Swipe Finisher
 
-- **Status:** Implemented; playtest verification pending.
+- **Status:** Implemented; Tier 1 runtime suite passing.
 - **Behavior implemented:**
   - Tapping while an enemy is staggered no longer kills it. The tap shoves the enemy back to approximately 7.4 m and resets its posture.
   - Swipe remains the only finisher, and the target must be within the 35° kill cone.
@@ -43,13 +43,13 @@ This log records implementation work against the acoustic redesign specification
   - `TouchDeadZone = 8f`
   - `SwipeDistanceThreshold = 90f`
   - `SwipeVelocityThreshold = 800f`
-- **Playtests:** Harness yaw handling updated. Dedicated tap-versus-staggered and off-axis swipe tests remain scheduled for Tier 4.
-- **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
-- **Deviations/deferred work:** Automated gesture-isolation tests are deferred to Tier 4.
+- **Playtests:** Tier 1 suite covers tap shove, shove distance, on-axis slash, off-axis slash rejection, and swipe yaw stability.
+- **Build/test result:** Compile check and Linux build passed; Tier 1 runtime suite passed 56/56 tests; headless smoke run reached Victory at 3 HP.
+- **Deviations/deferred work:** Automated gesture separation is now implemented in `OMTKPlaytest`; device touch feel remains to be validated.
 
 ## Tier 1.3 — Resonance Lock and Lock-In Audio
 
-- **Status:** Implemented; playtest verification pending.
+- **Status:** Implemented; Tier 1 runtime suite passing.
 - **Behavior implemented:**
   - Each living enemy tracks whether the player has held facing within 35° for 0.3 seconds.
   - Acquiring a lock plays a short, enemy-specific ring-in tone at the enemy's spatial position.
@@ -60,13 +60,13 @@ This log records implementation work against the acoustic redesign specification
 - **Configuration added:**
   - `ResonanceLockDuration = 0.3f`
   - Per-enemy lock clips derived from `EnemyVariant`.
-- **Playtests:** Not yet added; lock acquisition and perfect-parry enforcement are scheduled for Tier 4.
-- **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
-- **Deviations/deferred work:** Lock behavior has not yet been verified on a device or in play mode.
+- **Playtests:** Tier 1 suite covers lock acquisition at 0.3s, lock drop outside the cone, and perfect-parry enforcement without a lock.
+- **Build/test result:** Compile check and Linux build passed; Tier 1 runtime suite passed 56/56 tests; headless smoke run reached Victory at 3 HP.
+- **Deviations/deferred work:** Lock behavior is covered headlessly; device audio timing remains to be validated.
 
 ## Tier 1.4 — Opt-In Radar Assistance
 
-- **Status:** Implemented; playtest verification pending.
+- **Status:** Implemented; Tier 1 runtime suite passing.
 - **Behavior implemented:**
   - Directional radar now defaults to off and is persisted with `PlayerPrefs` key `OMTK_RadarAssist`.
   - When off, the radar dial, cardinal labels, heading readout, enemy blips, attack-timing blips, and radar pings are not drawn or played. The non-directional resonance ring remains visible.
@@ -79,13 +79,13 @@ This log records implementation work against the acoustic redesign specification
   - `OMTKConfig.RadarAssist = false`
   - `RadarAssistKey = "OMTK_RadarAssist"`
   - Options rows now include narrator, haptics, and radar assist.
-- **Playtests:** Radar-off invisibility, radar persistence, and resonance-ring independence are scheduled for Tier 4.
-- **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
-- **Deviations/deferred work:** The options menu uses tap-to-change and swipe-to-navigate rather than the previous fixed tap/swipe actions. This is required to expose more than two settings without adding new gestures. Radar behavior has not yet been verified in play mode.
+- **Playtests:** Tier 1 suite covers radar-off invisibility/readout hidden, persistence/reload, non-directional echo ring, and calibration suppression.
+- **Build/test result:** Compile check and Linux build passed; Tier 1 runtime suite passed 56/56 tests; headless smoke run reached Victory at 3 HP.
+- **Deviations/deferred work:** The options menu uses tap-to-change and swipe-to-navigate rather than the previous fixed tap/swipe actions. This is required to expose more than two settings without adding new gestures. Radar behavior is covered headlessly; visual inspection remains pending.
 
 ## Tier 1.5 — Wave 0 Calibration and Scripted First Death
 
-- **Status:** Implemented; playtest verification pending.
+- **Status:** Implemented; Tier 1 runtime suite passing.
 - **Behavior implemented:**
   - Attempt 1 now routes from the intro into an interactive calibration state before Wave 1.
   - Calibration emits a spatial tuning tone from 150° at 3.2 m. Its low-pass cutoff rises from 600 Hz toward 5000 Hz as the player faces it, reaching 5000 Hz inside the 15° alignment window.
@@ -105,13 +105,13 @@ This log records implementation work against the acoustic redesign specification
   - `CalibrationNudgeInterval = 3.4f`
   - `TutorialFirstDeathDelay = 3f`
   - `TutorialFirstDeathWindup = 0.85f`
-- **Playtests:** Calibration alignment/tap, fallback, deterministic tutorial death, and radar independence are scheduled for Tier 4.
-- **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
+- **Playtests:** Tier 1 suite covers calibration misalignment rejection, aligned acceptance, fallback exit, scripted tutorial windup, unparryable blow, deterministic first death, and no Echo grant.
+- **Build/test result:** Compile check and Linux build passed; Tier 1 runtime suite passed 56/56 tests; headless smoke run reached Victory at 3 HP.
 - **Deviations/deferred work:** The death sequence remains the existing passive replay/auto-retry until Tier 3 replaces it with the interactive Trace the Blow rehearsal. The temporary Echo unlock is suppressed specifically for the tutorial death so Tier 1 does not grant permanent combat power from the scripted failure.
 
 ## Tier 1.6 — Yaw Hygiene, Accessibility Gestures, and Volume
 
-- **Status:** Implemented; playtest verification pending.
+- **Status:** Implemented; Tier 1 runtime suite passing.
 - **Behavior implemented:**
   - `PlayerYaw` recenters to 0° on `StartRun`, `Retry`, `BeginWave`, and calibration start.
   - Every recenter plays a distinct centered two-tone orientation cue so the new forward reference is audible.
@@ -128,19 +128,26 @@ This log records implementation work against the acoustic redesign specification
   - `TwoFingerTapWindow = 0.34f`
   - `TwoFingerMaxTapDuration = 0.55f`
   - `OptionsCount = 4`
-- **Playtests:** Recenter behavior, heading/HP announcements, two-finger gesture separation, and volume persistence are scheduled for Tier 4.
-- **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported. Playtests were not executed.
+- **Playtests:** Tier 1 suite covers recenter transitions/clip, heading repeat without recenter, double-tap recenter, HP/wave report, volume persistence/reload, zero-volume wrap, and speech suppression.
+- **Build/test result:** Compile check and Linux build passed; Tier 1 runtime suite passed 56/56 tests; headless smoke run reached Victory at 3 HP.
 - **Deviations/deferred work:** Two-finger tap no longer opens the title options menu; the documented single-finger hold remains the options entry point. This avoids conflicting with the required accessibility gesture. Device audio, haptics, and TTS behavior have not been verified in this environment.
 
 ## Tier 1 closure — remove permanent combat advantages
 
-- **Status:** Implemented; playtest verification pending.
+- **Status:** Implemented; Tier 1 runtime suite passing.
 - **Behavior implemented:**
   - Legacy Echo unlocks no longer alter perfect-window width, perfect-angle width, enemy windup duration, or maximum HP.
   - Maximum HP is fixed at `3`.
   - `HasEcho` always returns false; legacy `OMTK_EchoMask` is deleted on load and no new Echo bonuses are granted.
   - Deaths still increment for statistics and best-wave tracking, but repeated deaths grant no combat advantage.
 - **Files changed:** `Assets/Scripts/OMTK/OMTKGame.cs`.
-- **Playtests:** Covered by the Tier 1 test suite (`hp stays 3`, no Echo-granted width/windup changes).
-- **Build/test result:** Compile check passed with exit code 0 and `Tundra build success`; no compiler errors or warnings were reported.
+- **Playtests:** Tier 1 suite verifies fixed HP, ignored and cleared legacy Echo mask, no new Echo unlock, and no legacy combat effect.
+- **Build/test result:** Compile check and Linux build passed; Tier 1 runtime suite passed 56/56 tests; headless smoke run reached Victory at 3 HP.
 - **Deviations/deferred work:** Codex discovery/mastery and the interactive death rehearsal remain scheduled for Tier 3. Echo unlock narration is currently suppressed so no unusable bonus is advertised.
+
+## Tier 1 verification
+
+- **Status:** Passing.
+- **Automated suite:** `-omtkPlaytestSuite` passed 56/56 checks covering parry grades, resonance lock, premature tap, shove/slash separation, radar privacy, calibration, tutorial death, progression invariants, recenter, volume, and accessibility gestures.
+- **Smoke run:** `-omtkPlaytest` completed Wave 3 and reached Victory at 3 HP in 16.4 seconds with exit code 0.
+- **Environment:** Linux x86_64 headless build. Device audio, haptics, and TTS remain unverified.

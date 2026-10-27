@@ -18,7 +18,7 @@ namespace OMTK
             string[] args = System.Environment.GetCommandLineArgs();
             for (int i = 0; i < args.Length; i++)
             {
-                if (args[i] == "-omtkPlaytest")
+                if (args[i] == "-omtkPlaytest" || args[i] == "-omtkPlaytestSuite")
                 {
                     root.AddComponent<OMTKPlaytest>();
                     break;
