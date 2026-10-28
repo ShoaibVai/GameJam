@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>One More Time, Knight — SVG UI mock</title>
+<style>
+  body { margin: 0; background: #0e1116; color: #c9dcee; font-family: sans-serif; display: flex; gap: 24px; padding: 24px; }
+  .stage { position: relative; width: 1080px; height: 1920px; transform-origin: top left; transform: scale(0.42); flex: none;
+           background: #05070A; overflow: hidden; box-shadow: 0 0 40px #000; }
+  .stage img { position: absolute; image-rendering: auto; }
+  .full { left: 0; top: 0; width: 1080px; height: 1920px; }
+  .text { position: absolute; text-align: center; letter-spacing: 1px; }
+  .status  { left: 80px; top: 14px; width: 920px; font-size: 30px; color: rgba(199,213,230,0.86); text-shadow: 2px 2px 0 rgba(0,0,0,0.9); }
+  .title   { left: 40px; top: 1324px; width: 1000px; font-size: 56px; font-weight: 700; color: rgba(219,237,255,0.95); line-height: 1.15; }
+  .prompt  { left: 80px; top: 1382px; width: 920px; font-size: 36px; color: rgba(230,242,255,0.9); letter-spacing: 6px; }
+  .subtitle{ left: 40px; top: 1560px; width: 1000px; font-size: 34px; line-height: 1.35; color: #ffe694; }
+  .attempt { right: 22px; top: 136px; width: 280px; font-size: 21px; text-align: right; color: rgba(158,184,209,0.75); }
+  .readout { left: 420px; top: 940px; width: 240px; font-size: 22px; color: rgba(184,214,242,0.5); }
+  .radarlabel { font-size: 20px; color: rgba(184,214,242,0.38); width: 90px; text-align: center; }
+  .card { max-width: 340px; }
+  .card h3 { color: #e9c97f; margin: 0 0 8px; }
+  .note { color: #8fa6bc; font-size: 13px; }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <img class="full" src="preview/vignette.png">
+    <!-- corners: 132px boxes inset 10px, per rotation in CreateCorners -->
+    <img src="preview/corner.png" style="left:10px; top:10px; width:132px;">
+    <img src="preview/corner.png" style="left:938px; top:10px; width:132px; transform:rotate(-90deg);">
+    <img src="preview/corner.png" style="left:938px; top:1778px; width:132px; transform:rotate(180deg);">
+    <img src="preview/corner.png" style="left:10px; top:1778px; width:132px; transform:rotate(90deg);">
+    <img src="preview/ring.png" style="left:320px; top:740px; width:440px; opacity:0.75;">
+    <img src="preview/radar_dial.png" style="left:320px; top:740px; width:440px; opacity:0.2;">
+    <img src="preview/blip_core.png" style="left:489px; top:762px; width:26px; color:white;">
+    <img src="preview/glow_radial.png" style="left:466px; top:739px; width:72px; opacity:0.3;">
+    <div class="readout">HDG 000°</div>
+    <div class="radarlabel" style="left:495px; top:665px;">000°</div>
+    <div class="radarlabel" style="left:740px; top:925px;">090°</div>
+    <div class="radarlabel" style="left:495px; top:1180px;">180°</div>
+    <div class="radarlabel" style="left:248px; top:925px;">270°</div>
+    <div class="text status">WAVE 1/3&nbsp;&nbsp;&nbsp;ATTEMPT 1</div>
+    <!-- shields: heartsRoot at (20,-78) under safe root -->
+    <img src="preview/shield_full.png"  style="left:20px;  top:78px; width:76px;">
+    <img src="preview/shield_full.png"  style="left:108px; top:78px; width:76px;">
+    <img src="preview/shield_empty.png" style="left:196px; top:78px; width:76px;">
+    <!-- wave pips -->
+    <img src="preview/pip_full.png"  style="right:64px;  top:84px; width:44px;">
+    <img src="preview/pip_full.png"  style="right:126px; top:84px; width:44px;">
+    <img src="preview/pip_empty.png" style="right:188px; top:84px; width:44px;">
+    <div class="text attempt">ATTEMPT 1</div>
+    <img src="preview/sigil.png" style="left:330px; top:1286px; width:420px;">
+    <div class="text title">ONE MORE TIME,<br>KNIGHT</div>
+    <img src="preview/rule.png" style="left:80px; top:1832px; width:920px;">
+    <img src="preview/icon_listen.png" style="left:494px; top:1756px; width:92px; opacity:0.92;">
+    <div class="text prompt">LISTEN</div>
+    <div class="text subtitle">Turn your head.<br>Tap to parry. Swipe to answer.</div>
+  </div>
+
+  <div class="card">
+    <h3>SVG UI mock — gameplay layout</h3>
+    <p class="note">Static preview assembled from the exact RectTransform constants in
+    <code>OMTKGame.CreateUI</code> and the textures rendered by <code>Docs/UI/render.sh</code>.
+    It is a layout reference, not an engine capture — device verification is still pending.</p>
+    <p class="note">Damage shows as a red edge vignette pulse; perfect parries bloom a cyan
+    flash from the resonance ring. Prompt icons pop and fade with each cue word.</p>
+    <p class="note">On victory the laurel plate fades in beneath the title with a slow breathe,
+    sigil and rule follow the title's visibility.</p>
+    <h3>Elements</h3>
+    <p class="note">21 SVG sources in <code>Docs/UI/svg</code> → 2x PNGs in
+    <code>Assets/Resources/UI</code>: vignette, corner, ring, radar_dial, blip_core,
+    glow_radial, flash_edge, shield_full/empty, pip_full/empty, icon_tap/turn/listen/swipe/breathe/trace/wait,
+    sigil, rule, laurel.</p>
+  </div>
+
+  <script>
+    document.querySelectorAll('.stage').forEach(s => {
+      const fit = () => { s.style.transform = 'scale(' + Math.min(1, (innerHeight - 48) / 1920) + ')'; };
+      fit(); addEventListener('resize', fit);
+    });
+  </script>
+</body>
+</html>

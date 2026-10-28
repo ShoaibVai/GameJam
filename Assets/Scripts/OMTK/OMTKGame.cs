@@ -91,6 +91,29 @@ namespace OMTK
         private Text subtitleText;
         private Text promptText;
         private Font uiFont;
+        private RectTransform safeRoot;
+        private Image vignette;
+        private Image flashBloom;
+        private RectTransform pauseRoot;
+        private Text pauseTitle;
+        private Image hitArc;
+        private float hitArcLife;
+        private float hitArcBearing;
+        private bool runPaused;
+        private string pauseSavedPrompt;
+        private Image promptIcon;
+        private Image sigil;
+        private Image rule;
+        private Image laurel;
+        private Image[] hearts;
+        private Image[] wavePips;
+        private Text attemptText;
+        private Vector2 lastScreenSize;
+        private Rect lastSafeArea = new Rect(-1f, -1f, -1f, -1f);
+        private string lastStatus;
+        private string lastAttempt;
+        private string lastPrompt;
+        private float promptPop;
         private OMTKEnemy primaryToken;
         private OMTKEnemy offbeatToken;
         private OMTKEnemy pendingToken;
@@ -203,8 +226,10 @@ namespace OMTK
         private const float VolumeStep = 0.25f;
         private const float TwoFingerTapWindow = 0.34f;
         private const float TwoFingerMaxTapDuration = 0.55f;
-        private const string BootLine = "One More Time, Knight. Tap once to begin. Hold to open options. Turn your head to listen. Tap to parry. Swipe to answer.";
+        private const string BootLine = "One More Time, Knight. Tap once to begin. Hold to open options. Turn your head to listen. Tap to parry. Swipe to answer. Hold during a run to pause.";
         private const int RadarBlipCount = 4;
+        private const float PauseHoldDuration = 0.5f;
+        private const string PausedPromptText = "TAP TO RESUME   ·   SWIPE DOWN TO ABANDON";
 
         private void Awake()
         {
@@ -240,7 +265,7 @@ namespace OMTK
             }
 
             applicationPaused = paused;
-            AudioListener.pause = paused;
+            AudioListener.pause = paused || runPaused;
             if (paused)
             {
                 Audio.StopVoice();
@@ -250,6 +275,10 @@ namespace OMTK
             else
             {
                 Time.timeScale = resumeTimeScale;
+                if (!runPaused && Time.timeScale == 0f)
+                {
+                    Time.timeScale = 1f;
+                }
             }
         }
 
@@ -269,19 +298,29 @@ namespace OMTK
                 systemTts.Tick();
             }
 
-            Audio.Tick();
-            StateTime += deltaTime;
-            guardLockout = Mathf.Max(0f, guardLockout - deltaTime);
             UpdateInput(deltaTime);
+            UpdateSafeArea();
 
             if (twoFingerPending && Time.unscaledTime >= twoFingerPendingUntil)
             {
                 twoFingerPending = false;
-                if (!(State == GameState.Title && optionsOpen))
+                if (!(State == GameState.Title && optionsOpen) && !runPaused)
                 {
                     RepeatLastCueAndHeading();
                 }
             }
+
+            if (runPaused)
+            {
+                UpdateVisuals(deltaTime);
+                UpdateRadar(deltaTime);
+                UpdateHud();
+                return;
+            }
+
+            Audio.Tick();
+            StateTime += deltaTime;
+            guardLockout = Mathf.Max(0f, guardLockout - deltaTime);
 
             if (State == GameState.Intro && StateTime >= introDuration)
             {
@@ -483,6 +522,7 @@ namespace OMTK
             if (TryConsumeIronShield())
             {
                 damageFlash = 0.65f;
+                ShowHitArc(enemy.Azimuth, 0.75f);
                 PulseHaptic();
                 Audio.Play2D(Audio.ParryClip, 0.9f, 0.82f);
                 ShowSubtitle("Iron holds. Once.", 1.05f);
@@ -497,6 +537,7 @@ namespace OMTK
 
             Hp--;
             damageFlash = 1f;
+            ShowHitArc(enemy.Azimuth, 1f);
             PulseHaptic();
             Audio.Play2D(Audio.HitClip, 0.95f, Random.Range(0.92f, 1.04f));
             ShowSubtitle("It found you.", 1.05f);
@@ -1402,12 +1443,14 @@ namespace OMTK
 
             if (TryConsumeIronShield())
             {
+                ShowHitArc(finaleBearing, 0.75f);
                 ShowSubtitle("Iron holds. Once.", 1f);
                 return;
             }
 
             Hp--;
             damageFlash = 1f;
+            ShowHitArc(finaleBearing, 1f);
             PulseHaptic();
             Audio.Play2D(Audio.HitClip, 0.9f, 0.94f);
             ShowSubtitle(message, 1.1f);
@@ -1680,6 +1723,7 @@ namespace OMTK
             Audio.Unduck();
             Audio.Duck(0.24f);
             SaveProgress();
+            ShowHitArc(fatalAzimuth, 1.5f);
             ShowSubtitle("You died.", 1.1f);
             promptText.text = "LISTEN";
             Audio.Speak("You died. Trace the blow.");
@@ -2061,7 +2105,23 @@ namespace OMTK
                     ToggleOptions();
                 }
 
-                if (keyboard.escapeKey.wasPressedThisFrame && optionsOpen)
+                if (keyboard.pKey.wasPressedThisFrame && (runPaused || PauseAllowed))
+                {
+                    if (runPaused)
+                    {
+                        ResumeRun();
+                    }
+                    else
+                    {
+                        EnterPause();
+                    }
+                }
+
+                if (keyboard.escapeKey.wasPressedThisFrame && runPaused)
+                {
+                    ResumeRun();
+                }
+                else if (keyboard.escapeKey.wasPressedThisFrame && optionsOpen)
                 {
                     ToggleOptions();
                 }
@@ -2081,7 +2141,7 @@ namespace OMTK
                 }
             }
 
-            if (Gyroscope.current != null)
+            if (Gyroscope.current != null && !runPaused)
             {
                 if (!gyroEnabled)
                 {
@@ -2217,11 +2277,33 @@ namespace OMTK
                 pointerLast = position;
             }
 
+            if (pointerHeld && PauseAllowed && !runPaused && !pointerSwipeDetected && pointerDownTime >= PauseHoldDuration && pointerTravel < 18f)
+            {
+                pointerHeld = false;
+                pointerSwipeDetected = false;
+                EnterPause();
+                return;
+            }
+
             if (up && pointerHeld)
             {
                 pointerHeld = false;
                 pointerSwipeDetected = false;
                 Vector2 delta = position - pointerStart;
+                if (runPaused)
+                {
+                    if (pointerTravel < 18f && delta.magnitude < 45f && pointerDownTime < 0.42f)
+                    {
+                        ResumeRun();
+                    }
+                    else if (delta.y < -OMTKConfig.SwipeDistanceThreshold && Mathf.Abs(delta.x) < OMTKConfig.SwipeDistanceThreshold && pointerDownTime < 0.48f)
+                    {
+                        AbandonRunToTitle();
+                    }
+
+                    return;
+                }
+
                 if (State == GameState.Title && pointerTravel < 18f && delta.magnitude < 45f && pointerDownTime >= 0.75f)
                 {
                     ToggleOptions();
@@ -2633,6 +2715,120 @@ namespace OMTK
             }
         }
 
+        private bool PauseAllowed
+        {
+            get
+            {
+                return State == GameState.Intro
+                    || State == GameState.Playing
+                    || State == GameState.Interlude
+                    || State == GameState.Finale;
+            }
+        }
+
+        private void EnterPause()
+        {
+            if (runPaused || !PauseAllowed)
+            {
+                return;
+            }
+
+            runPaused = true;
+            CancelTimeDip();
+            AudioListener.pause = true;
+            Audio.StopVoice();
+            pauseSavedPrompt = promptText != null ? promptText.text : string.Empty;
+            if (promptText != null)
+            {
+                promptText.text = PausedPromptText;
+            }
+
+            if (pauseRoot != null)
+            {
+                pauseRoot.gameObject.SetActive(true);
+            }
+
+            PulseHaptic();
+            Narrator("Paused. Tap to resume, or swipe down to abandon the run.", 2.6f);
+        }
+
+        private void ResumeRun()
+        {
+            if (!runPaused)
+            {
+                return;
+            }
+
+            runPaused = false;
+            AudioListener.pause = false;
+            guardLockout = Mathf.Max(guardLockout, 0.45f);
+            if (pauseRoot != null)
+            {
+                pauseRoot.gameObject.SetActive(false);
+            }
+
+            if (promptText != null)
+            {
+                promptText.text = pauseSavedPrompt;
+            }
+
+            Audio.StopVoice();
+            Audio.Play2D(Audio.RecenterClip, 0.55f, 1.15f);
+            ShowSubtitle("Steady. Listen.", 1.1f);
+        }
+
+        private void AbandonRunToTitle()
+        {
+            if (!runPaused)
+            {
+                return;
+            }
+
+            runPaused = false;
+            AudioListener.pause = false;
+            if (pauseRoot != null)
+            {
+                pauseRoot.gameObject.SetActive(false);
+            }
+
+            CancelTimeDip();
+            ClearRunBargains();
+            rehearsalBonusVariant = null;
+            rehearsalBonusAttempt = 0;
+            ClearTutorial();
+            ClearEnemies();
+            Audio.StopTinnitus();
+            Audio.StopCalibration();
+            Audio.StopConductor();
+            Audio.StopMusic();
+            Audio.Unduck();
+            Audio.SetTension(false);
+            Audio.StopVoice();
+            SetState(GameState.Title);
+            if (promptText != null)
+            {
+                promptText.text = "TAP TO BEGIN";
+            }
+
+            Narrator("You stepped away. Tap when ready.", 2.4f);
+        }
+
+        private void ShowHitArc(float azimuth, float strength)
+        {
+            if (hitArc == null)
+            {
+                return;
+            }
+
+            hitArcBearing = Mathf.DeltaAngle(PlayerYaw, azimuth);
+            hitArcLife = Mathf.Max(0.6f, strength);
+            hitArc.rectTransform.localRotation = Quaternion.Euler(0f, 0f, -hitArcBearing);
+            if (!hitArc.gameObject.activeSelf)
+            {
+                hitArc.gameObject.SetActive(true);
+            }
+        }
+
         private void SetState(GameState state)
         {
             CancelTimeDip();
@@ -2688,6 +2884,102 @@ namespace OMTK
                 ring.color = color;
             }
 
+            if (hitArc != null)
+            {
+                if (hitArcLife > 0f && !runPaused)
+                {
+                    hitArcLife = Mathf.MoveTowards(hitArcLife, 0f, deltaTime * 2.4f);
+                }
+
+                float arcShown = Mathf.Clamp01(hitArcLife);
+                Color arcColor = hitArc.color;
+                arcColor.r = 1f;
+                arcColor.g = 0.15f;
+                arcColor.b = 0.09f;
+                arcColor.a = arcShown * 0.95f;
+                hitArc.color = arcColor;
+                float arcScale = 1f + 0.18f * (1f - arcShown);
+                hitArc.rectTransform.localScale = new Vector3(arcScale, arcScale, 1f);
+                bool arcVisible = arcShown > 0.004f;
+                if (hitArc.gameObject.activeSelf != arcVisible)
+                {
+                    hitArc.gameObject.SetActive(arcVisible);
+                }
+            }
+
+            if (flashBloom != null)
+            {
+                Color bloomColor = flashBloom.color;
+                bloomColor.r = 0.42f;
+                bloomColor.g = 0.95f;
+                bloomColor.b = 1f;
+                bloomColor.a = Mathf.Clamp01(parryFlash) * 0.2f;
+                flashBloom.color = bloomColor;
+                bool bloomVisible = bloomColor.a > 0.004f;
+                if (flashBloom.gameObject.activeSelf != bloomVisible)
+                {
+                    flashBloom.gameObject.SetActive(bloomVisible);
+                }
+            }
+
+            if (promptIcon != null && promptText != null)
+            {
+                string prompt = promptText.text;
+                if (prompt != lastPrompt)
+                {
+                    lastPrompt = prompt;
+                    Sprite icon = PromptIconFor(prompt);
+                    promptIcon.sprite = icon;
+                    bool showIcon = icon != null;
+                    if (promptIcon.gameObject.activeSelf != showIcon)
+                    {
+                        promptIcon.gameObject.SetActive(showIcon);
+                    }
+
+                    if (showIcon)
+                    {
+                        promptPop = 1f;
+                        promptIcon.rectTransform.localScale = new Vector3(1.24f, 1.24f, 1f);
+                    }
+                }
+
+                if (promptPop > 0f)
+                {
+                    promptPop = Mathf.MoveTowards(promptPop, 0f, deltaTime * 3.4f);
+                    float popScale = 1f + 0.24f * promptPop;
+                    promptIcon.rectTransform.localScale = new Vector3(popScale, popScale, 1f);
+                    Color iconColor = promptIcon.color;
+                    iconColor.a = 0.92f + 0.08f * promptPop;
+                    promptIcon.color = iconColor;
+                }
+            }
+
+            bool titleShown = titleText != null && titleText.gameObject.activeSelf;
+            if (sigil != null && sigil.gameObject.activeSelf != titleShown)
+            {
+                sigil.gameObject.SetActive(titleShown);
+            }
+
+            if (rule != null && rule.gameObject.activeSelf != titleShown)
+            {
+                rule.gameObject.SetActive(titleShown);
+            }
+
+            bool crownShown = State == GameState.Victory;
+            if (laurel != null && laurel.gameObject.activeSelf != crownShown)
+            {
+                laurel.gameObject.SetActive(crownShown);
+            }
+
+            if (crownShown && laurel != null)
+            {
+                float breathe = 1f + Mathf.Sin(Time.unscaledTime * 1.4f) * 0.02f;
+                laurel.rectTransform.localScale = new Vector3(breathe, breathe, 1f);
+                Color laurelColor = laurel.color;
+                laurelColor.a = Mathf.Clamp01((StateTime - 0.2f) * 1.4f) * 0.9f;
+                laurel.color = laurelColor;
+            }
+
             if (subtitleText != null)
             {
                 if (subtitleUntil > 0f && Time.unscaledTime >= subtitleUntil)
@@ -2729,8 +3021,8 @@ namespace OMTK
 
             if (radarReadout != null)
             {
-                float heading = Mathf.Repeat(PlayerYaw, 360f);
-                radarReadout.text = "HDG " + Mathf.RoundToInt(heading).ToString("000") + "°";
+                int heading = Mathf.RoundToInt(Mathf.Repeat(PlayerYaw, 360f)) % 360;
+                radarReadout.text = "HDG " + heading.ToString("000") + "°";
                 radarReadout.color = new Color(0.72f, 0.84f, 0.95f, active ? 0.58f : 0.32f);
             }
 
@@ -2943,27 +3235,196 @@ namespace OMTK
                 return;
             }
 
+            if (runPaused)
+            {
+                if (!string.Equals(lastStatus, "PAUSED"))
+                {
+                    lastStatus = "PAUSED";
+                    statusText.text = "PAUSED";
+                }
+
+                UpdateRunHud(false);
+                return;
+            }
+
+            bool runHud;
+            string status;
             if (State == GameState.Title)
             {
+                runHud = false;
                 bool preparingVoice = systemTts != null && !systemTts.IsReady && !systemTts.IsFailed;
-                statusText.text = optionsOpen ? "ACCESSIBILITY" : preparingVoice ? "PREPARING VOICE" : "HEADPHONES ON";
+                status = optionsOpen ? "ACCESSIBILITY" : preparingVoice ? "PREPARING VOICE" : "HEADPHONES ON";
             }
             else if (State == GameState.Calibration)
             {
-                statusText.text = "CALIBRATION";
+                runHud = true;
+                status = "CALIBRATION";
             }
             else if (State == GameState.Finale)
             {
-                statusText.text = "THE CONDUCTOR";
+                runHud = true;
+                status = "THE CONDUCTOR";
             }
             else if (State == GameState.Victory)
             {
-                statusText.text = "THE HALL IS QUIET";
+                runHud = false;
+                status = "THE HALL IS QUIET";
             }
             else
             {
-                statusText.text = "HP " + Hp + "/" + MaxHp + "   WAVE " + Wave + "/3   ATTEMPT " + Attempt;
+                runHud = true;
+                if (OmtkArt.HasShields)
+                {
+                    status = "WAVE " + Wave + "/3";
+                }
+                else
+                {
+                    status = "HP " + Hp + "/" + MaxHp + "   WAVE " + Wave + "/3   ATTEMPT " + Attempt;
+                }
             }
+
+            if (!string.Equals(status, lastStatus))
+            {
+                lastStatus = status;
+                statusText.text = status;
+            }
+
+            UpdateRunHud(runHud);
+        }
+
+        private void UpdateRunHud(bool on)
+        {
+            if (hearts != null)
+            {
+                for (int i = 0; i < hearts.Length; i++)
+                {
+                    bool visible = on && i < MaxHp && hearts[i].sprite != null;
+                    if (hearts[i].gameObject.activeSelf != visible)
+                    {
+                        hearts[i].gameObject.SetActive(visible);
+                    }
+
+                    if (visible)
+                    {
+                        Sprite shieldSprite = OmtkArt.ShieldFull(i < Hp);
+                        if (hearts[i].sprite != shieldSprite)
+                        {
+                            hearts[i].sprite = shieldSprite;
+                        }
+                    }
+                }
+            }
+
+            if (wavePips != null)
+            {
+                for (int i = 0; i < wavePips.Length; i++)
+                {
+                    bool visible = on && wavePips[i].sprite != null;
+                    if (wavePips[i].gameObject.activeSelf != visible)
+                    {
+                        wavePips[i].gameObject.SetActive(visible);
+                    }
+
+                    if (visible)
+                    {
+                        Sprite pipSprite = OmtkArt.Pip(i < Wave);
+                        if (wavePips[i].sprite != pipSprite)
+                        {
+                            wavePips[i].sprite = pipSprite;
+                        }
+                    }
+                }
+            }
+
+            if (attemptText != null && attemptText.gameObject.activeSelf != on)
+            {
+                attemptText.gameObject.SetActive(on);
+            }
+
+            if (on && attemptText != null)
+            {
+                string attempt = "ATTEMPT " + Attempt;
+                if (!string.Equals(attempt, lastAttempt))
+                {
+                    lastAttempt = attempt;
+                    attemptText.text = attempt;
+                }
+            }
+        }
+
+        private static Sprite PromptIconFor(string prompt)
+        {
+            if (string.IsNullOrEmpty(prompt) || prompt.Contains(":"))
+            {
+                return null;
+            }
+
+            if (prompt.StartsWith("TAP"))
+            {
+                return OmtkArt.Load("icon_tap");
+            }
+
+            if (prompt.StartsWith("TURN"))
+            {
+                return OmtkArt.Load("icon_turn");
+            }
+
+            if (prompt.StartsWith("LISTEN"))
+            {
+                return OmtkArt.Load("icon_listen");
+            }
+
+            if (prompt.StartsWith("SWIPE"))
+            {
+                return OmtkArt.Load("icon_swipe");
+            }
+
+            if (prompt.StartsWith("BREATHE"))
+            {
+                return OmtkArt.Load("icon_breathe");
+            }
+
+            if (prompt.StartsWith("TRACE"))
+            {
+                return OmtkArt.Load("icon_trace");
+            }
+
+            if (prompt.StartsWith("WAIT"))
+            {
+                return OmtkArt.Load("icon_wait");
+            }
+
+            return null;
+        }
+
+        private void UpdateSafeArea()
+        {
+            if (safeRoot == null)
+            {
+                return;
+            }
+
+            Vector2 size = new Vector2(Screen.width, Screen.height);
+            Rect area = Screen.safeArea;
+            if (size == lastScreenSize && area == lastSafeArea)
+            {
+                return;
+            }
+
+            lastScreenSize = size;
+            lastSafeArea = area;
+            float scale = 0.5f * (size.x / 1080f + size.y / 1920f);
+            if (scale < 0.0001f)
+            {
+                return;
+            }
+
+            float left = area.x / scale;
+            float bottom = area.y / scale;
+            float right = (size.x - area.xMax) / scale;
+            float top = (size.y - area.yMax) / scale;
+            safeRoot.offsetMin = new Vector2(left, bottom);
+            safeRoot.offsetMax = new Vector2(-right, -top);
         }
 
         private void ShowSubtitle(string text, float duration)
@@ -3090,17 +3551,33 @@ namespace OMTK
             Stretch(background.rectTransform);
             background.raycastTarget = false;
 
+            Sprite vignetteSprite = OmtkArt.Load("vignette");
+            vignette = CreateImage("Vignette", canvasObject.transform, Color.white);
+            vignette.preserveAspect = false;
+            Stretch(vignette.rectTransform);
+            if (vignetteSprite != null)
+            {
+                vignette.sprite = vignetteSprite;
+            }
+            else
+            {
+                vignette.gameObject.SetActive(false);
+            }
+
+            safeRoot = new GameObject("SafeRoot", typeof(RectTransform)).GetComponent<RectTransform>();
+            safeRoot.SetParent(canvasObject.transform, false);
+            Stretch(safeRoot);
+
+            CreateCorners(safeRoot);
+
             ring = CreateImage("Echo Ring", canvasObject.transform, new Color(0.68f, 0.86f, 0.96f, 0.72f));
-            ring.sprite = CreateRingSprite();
+            ring.sprite = OmtkArt.Load("ring") ?? CreateRingSprite();
             ring.preserveAspect = true;
-            ring.rectTransform.anchorMin = new Vector2(0.5f, 0.5f);
-            ring.rectTransform.anchorMax = new Vector2(0.5f, 0.5f);
-            ring.rectTransform.pivot = new Vector2(0.5f, 0.5f);
-            ring.rectTransform.anchoredPosition = Vector2.zero;
+            CenterRect(ring.rectTransform);
             ring.rectTransform.sizeDelta = new Vector2(440f, 440f);
 
             radarDial = CreateImage("Radar Dial", canvasObject.transform, new Color(0.68f, 0.86f, 0.96f, 0.18f));
-            radarDial.sprite = CreateRadarDialSprite();
+            radarDial.sprite = OmtkArt.Load("radar_dial") ?? CreateRadarDialSprite();
             radarDial.preserveAspect = true;
             CenterRect(radarDial.rectTransform);
             radarDial.rectTransform.sizeDelta = new Vector2(440f, 440f);
@@ -3108,8 +3585,8 @@ namespace OMTK
             radarBlipRoots = new RectTransform[RadarBlipCount];
             radarBlipCores = new Image[RadarBlipCount];
             radarBlipGlows = new Image[RadarBlipCount];
-            Sprite coreSprite = CreateRadarBlipSprite(true);
-            Sprite glowSprite = CreateRadarBlipSprite(false);
+            Sprite coreSprite = OmtkArt.Load("blip_core") ?? CreateRadarBlipSprite(true);
+            Sprite glowSprite = OmtkArt.Load("glow_radial") ?? CreateRadarBlipSprite(false);
             for (int i = 0; i < RadarBlipCount; i++)
             {
                 GameObject blipObject = new GameObject("Radar Blip " + i, typeof(RectTransform));
@@ -3136,6 +3613,52 @@ namespace OMTK
                 blipObject.SetActive(false);
             }
 
+            flashBloom = CreateImage("Flash Bloom", canvasObject.transform, new Color(0.42f, 0.95f, 1f, 0f));
+            flashBloom.sprite = OmtkArt.Load("glow_radial");
+            flashBloom.preserveAspect = true;
+            CenterRect(flashBloom.rectTransform);
+            flashBloom.rectTransform.sizeDelta = new Vector2(980f, 1080f);
+            if (flashBloom.sprite == null)
+            {
+                flashBloom.gameObject.SetActive(false);
+                flashBloom = null;
+            }
+
+            hitArc = CreateImage("Hit Arc", canvasObject.transform, new Color(1f, 0.15f, 0.09f, 0f));
+            hitArc.sprite = OmtkArt.Load("hit_arc");
+            hitArc.preserveAspect = true;
+            CenterRect(hitArc.rectTransform);
+            hitArc.rectTransform.sizeDelta = new Vector2(440f, 440f);
+            hitArc.gameObject.SetActive(false);
+            if (hitArc.sprite == null)
+            {
+                hitArc = null;
+            }
+
+            pauseRoot = new GameObject("Pause Root", typeof(RectTransform)).GetComponent<RectTransform>();
+            pauseRoot.SetParent(canvasObject.transform, false);
+            Stretch(pauseRoot);
+            Image pauseBackdrop = CreateImage("Pause Backdrop", pauseRoot, new Color(0.01f, 0.02f, 0.03f, 0.86f));
+            Stretch(pauseBackdrop.rectTransform);
+            Image pauseRule = CreateImage("Pause Rule", pauseRoot, Color.white);
+            pauseRule.sprite = OmtkArt.Load("rule");
+            pauseRule.preserveAspect = false;
+            pauseRule.rectTransform.anchorMin = new Vector2(0.5f, 0.585f);
+            pauseRule.rectTransform.anchorMax = new Vector2(0.5f, 0.585f);
+            pauseRule.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            pauseRule.rectTransform.anchoredPosition = Vector2.zero;
+            pauseRule.rectTransform.sizeDelta = new Vector2(920f, 46f);
+            pauseTitle = CreateText("Pause Title", pauseRoot, 58, new Color(0.86f, 0.93f, 1f, 0.96f), TextAnchor.MiddleCenter);
+            pauseTitle.fontStyle = FontStyle.Bold;
+            pauseTitle.rectTransform.anchorMin = new Vector2(0.5f, 0.62f);
+            pauseTitle.rectTransform.anchorMax = new Vector2(0.5f, 0.62f);
+            pauseTitle.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            pauseTitle.rectTransform.anchoredPosition = Vector2.zero;
+            pauseTitle.rectTransform.sizeDelta = new Vector2(800f, 120f);
+            pauseTitle.fontSize = 58;
+            pauseTitle.text = "PAUSED";
+            pauseRoot.gameObject.SetActive(false);
+
             string[] radarLabelText = { "000°", "090°", "180°", "270°" };
             RadarLabels(radarLabelText, canvasObject.transform);
 
@@ -3145,13 +3668,75 @@ namespace OMTK
             radarReadout.text = "HDG 000°";
             SetRadarVisible(OMTKConfig.RadarAssist);
 
-            statusText = CreateText("Status", canvasObject.transform, 32, new Color(0.78f, 0.84f, 0.9f, 0.86f), TextAnchor.UpperLeft);
-            statusText.rectTransform.anchorMin = new Vector2(0f, 1f);
-            statusText.rectTransform.anchorMax = new Vector2(0f, 1f);
-            statusText.rectTransform.pivot = new Vector2(0f, 1f);
-            statusText.rectTransform.anchoredPosition = new Vector2(36f, -32f);
-            statusText.rectTransform.sizeDelta = new Vector2(880f, 70f);
+            statusText = CreateText("Status", safeRoot, 30, new Color(0.78f, 0.84f, 0.9f, 0.86f), TextAnchor.MiddleCenter);
+            statusText.rectTransform.anchorMin = new Vector2(0.5f, 1f);
+            statusText.rectTransform.anchorMax = new Vector2(0.5f, 1f);
+            statusText.rectTransform.pivot = new Vector2(0.5f, 1f);
+            statusText.rectTransform.anchoredPosition = new Vector2(0f, -14f);
+            statusText.rectTransform.sizeDelta = new Vector2(920f, 52f);
             statusText.text = "HEADPHONES ON";
+
+            GameObject heartsRoot = new GameObject("Hearts", typeof(RectTransform));
+            heartsRoot.transform.SetParent(safeRoot, false);
+            RectTransform heartsRect = heartsRoot.GetComponent<RectTransform>();
+            heartsRect.anchorMin = new Vector2(0f, 1f);
+            heartsRect.anchorMax = new Vector2(0f, 1f);
+            heartsRect.pivot = new Vector2(0f, 1f);
+            heartsRect.anchoredPosition = new Vector2(20f, -78f);
+            heartsRect.sizeDelta = new Vector2(280f, 96f);
+            hearts = new Image[OMTKConfig.BaseMaxHp];
+            for (int i = 0; i < hearts.Length; i++)
+            {
+                Image heart = CreateImage("Heart " + i, heartsRect, Color.white);
+                heart.preserveAspect = true;
+                heart.rectTransform.anchorMin = new Vector2(0f, 1f);
+                heart.rectTransform.anchorMax = new Vector2(0f, 1f);
+                heart.rectTransform.pivot = new Vector2(0f, 1f);
+                heart.rectTransform.anchoredPosition = new Vector2(i * 88f, 0f);
+                heart.rectTransform.sizeDelta = new Vector2(76f, 90f);
+                heart.sprite = OmtkArt.ShieldFull(true) ?? OmtkArt.ShieldFull(false);
+                if (heart.sprite == null)
+                {
+                    heart.gameObject.SetActive(false);
+                }
+
+                hearts[i] = heart;
+            }
+
+            GameObject pipsRoot = new GameObject("Wave Pips", typeof(RectTransform));
+            pipsRoot.transform.SetParent(safeRoot, false);
+            RectTransform pipsRect = pipsRoot.GetComponent<RectTransform>();
+            pipsRect.anchorMin = new Vector2(1f, 1f);
+            pipsRect.anchorMax = new Vector2(1f, 1f);
+            pipsRect.pivot = new Vector2(1f, 1f);
+            pipsRect.anchoredPosition = new Vector2(-20f, -78f);
+            pipsRect.sizeDelta = new Vector2(280f, 96f);
+            wavePips = new Image[3];
+            for (int i = 0; i < wavePips.Length; i++)
+            {
+                Image pip = CreateImage("Pip " + i, pipsRect, Color.white);
+                pip.preserveAspect = true;
+                pip.rectTransform.anchorMin = new Vector2(1f, 1f);
+                pip.rectTransform.anchorMax = new Vector2(1f, 1f);
+                pip.rectTransform.pivot = new Vector2(1f, 1f);
+                pip.rectTransform.anchoredPosition = new Vector2(-(wavePips.Length - 1 - i) * 62f, -6f);
+                pip.rectTransform.sizeDelta = new Vector2(44f, 44f);
+                pip.sprite = OmtkArt.Pip(true) ?? OmtkArt.Pip(false);
+                if (pip.sprite == null)
+                {
+                    pip.gameObject.SetActive(false);
+                }
+
+                wavePips[i] = pip;
+            }
+
+            attemptText = CreateText("Attempt", pipsRect, 21, new Color(0.62f, 0.72f, 0.82f, 0.75f), TextAnchor.UpperRight);
+            attemptText.rectTransform.anchorMin = new Vector2(1f, 1f);
+            attemptText.rectTransform.anchorMax = new Vector2(1f, 1f);
+            attemptText.rectTransform.pivot = new Vector2(1f, 1f);
+            attemptText.rectTransform.anchoredPosition = new Vector2(-2f, -58f);
+            attemptText.rectTransform.sizeDelta = new Vector2(280f, 40f);
+            attemptText.text = string.Empty;
 
             titleText = CreateText("Title", canvasObject.transform, 54, new Color(0.86f, 0.93f, 1f, 0.95f), TextAnchor.MiddleCenter);
             titleText.fontStyle = FontStyle.Bold;
@@ -3162,19 +3747,115 @@ namespace OMTK
             titleText.rectTransform.sizeDelta = new Vector2(1000f, 200f);
             titleText.text = "ONE MORE TIME,\nKNIGHT";
 
-            subtitleText = CreateText("Subtitle", canvasObject.transform, 36, new Color(1f, 0.9f, 0.58f, 1f), TextAnchor.MiddleCenter);
+            sigil = CreateImage("Sigil", canvasObject.transform, Color.white);
+            sigil.sprite = OmtkArt.Load("sigil");
+            sigil.preserveAspect = true;
+            sigil.rectTransform.anchorMin = new Vector2(0.5f, 0.855f);
+            sigil.rectTransform.anchorMax = new Vector2(0.5f, 0.855f);
+            sigil.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            sigil.rectTransform.anchoredPosition = Vector2.zero;
+            sigil.rectTransform.sizeDelta = new Vector2(420f, 300f);
+            if (sigil.sprite == null)
+            {
+                sigil.gameObject.SetActive(false);
+                sigil = null;
+            }
+
+            rule = CreateImage("Rule", canvasObject.transform, Color.white);
+            rule.sprite = OmtkArt.Load("rule");
+            rule.preserveAspect = false;
+            rule.rectTransform.anchorMin = new Vector2(0.5f, 0.681f);
+            rule.rectTransform.anchorMax = new Vector2(0.5f, 0.681f);
+            rule.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            rule.rectTransform.anchoredPosition = Vector2.zero;
+            rule.rectTransform.sizeDelta = new Vector2(920f, 46f);
+            if (rule.sprite == null)
+            {
+                rule.gameObject.SetActive(false);
+                rule = null;
+            }
+
+            laurel = CreateImage("Laurel", canvasObject.transform, Color.white);
+            laurel.sprite = OmtkArt.Load("laurel");
+            laurel.preserveAspect = true;
+            laurel.rectTransform.anchorMin = new Vector2(0.5f, 0.595f);
+            laurel.rectTransform.anchorMax = new Vector2(0.5f, 0.595f);
+            laurel.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            laurel.rectTransform.anchoredPosition = Vector2.zero;
+            laurel.rectTransform.sizeDelta = new Vector2(660f, 330f);
+            laurel.gameObject.SetActive(false);
+            if (laurel.sprite == null)
+            {
+                laurel = null;
+            }
+
+            promptIcon = CreateImage("Prompt Icon", safeRoot, new Color(0.9f, 0.95f, 1f, 0.92f));
+            promptIcon.sprite = OmtkArt.Load("icon_tap");
+            promptIcon.preserveAspect = true;
+            promptIcon.rectTransform.anchorMin = new Vector2(0.5f, 0.25f);
+            promptIcon.rectTransform.anchorMax = new Vector2(0.5f, 0.25f);
+            promptIcon.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+            promptIcon.rectTransform.anchoredPosition = new Vector2(0f, 92f);
+            promptIcon.rectTransform.sizeDelta = new Vector2(92f, 92f);
+            promptIcon.gameObject.SetActive(false);
+            if (promptIcon.sprite == null)
+            {
+                promptIcon = null;
+            }
+
+            subtitleText = CreateText("Subtitle", safeRoot, 36, new Color(1f, 0.9f, 0.58f, 1f), TextAnchor.MiddleCenter);
             subtitleText.rectTransform.anchorMin = new Vector2(0.5f, 0f);
             subtitleText.rectTransform.anchorMax = new Vector2(0.5f, 0f);
             subtitleText.rectTransform.pivot = new Vector2(0.5f, 0f);
             subtitleText.rectTransform.anchoredPosition = new Vector2(0f, 110f);
-            subtitleText.rectTransform.sizeDelta = new Vector2(1000f, 270f);
+            subtitleText.rectTransform.sizeDelta = new Vector2(660f, 270f);
 
-            promptText = CreateText("Prompt", canvasObject.transform, 36, new Color(0.9f, 0.95f, 1f, 0.9f), TextAnchor.MiddleCenter);
+            promptText = CreateText("Prompt", safeRoot, 36, new Color(0.9f, 0.95f, 1f, 0.9f), TextAnchor.MiddleCenter);
             promptText.rectTransform.anchorMin = new Vector2(0.5f, 0.25f);
             promptText.rectTransform.anchorMax = new Vector2(0.5f, 0.25f);
             promptText.rectTransform.pivot = new Vector2(0.5f, 0.5f);
             promptText.rectTransform.anchoredPosition = Vector2.zero;
             promptText.rectTransform.sizeDelta = new Vector2(920f, 100f);
+
+            UpdateSafeArea();
+        }
+
+        private void CreateCorners(Transform parent)
+        {
+            Sprite cornerSprite = OmtkArt.Load("corner");
+            if (cornerSprite == null)
+            {
+                return;
+            }
+
+            Vector2[] anchors =
+            {
+                new Vector2(0f, 1f),
+                new Vector2(1f, 1f),
+                new Vector2(1f, 0f),
+                new Vector2(0f, 0f)
+            };
+            Vector2[] positions =
+            {
+                new Vector2(76f, -76f),
+                new Vector2(-76f, -76f),
+                new Vector2(-76f, 76f),
+                new Vector2(76f, 76f)
+            };
+            float[] rotations = { 0f, -90f, 180f, 90f };
+            for (int i = 0; i < 4; i++)
+            {
+                Image corner = CreateImage("Corner " + i, parent, new Color(0.79f, 0.86f, 0.93f, 0.5f));
+                corner.sprite = cornerSprite;
+                corner.preserveAspect = true;
+                corner.rectTransform.anchorMin = anchors[i];
+                corner.rectTransform.anchorMax = anchors[i];
+                corner.rectTransform.pivot = new Vector2(0.5f, 0.5f);
+                corner.rectTransform.anchoredPosition = positions[i];
+                corner.rectTransform.sizeDelta = new Vector2(132f, 132f);
+                corner.rectTransform.localRotation = Quaternion.Euler(0f, 0f, rotations[i]);
+                corner.raycastTarget = false;
+            }
         }
 
         private Font LoadFont()

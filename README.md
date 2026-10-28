@@ -20,6 +20,7 @@ Built for GameJamPlus 2026, theme: **One More Time**.
 | Swipe horizontally | Slash a staggered enemy, start a run, or strike in the finale |
 | Swipe up during death | Accept a bargain; still align and tap to finish the rehearsal |
 | Hold on the title | Open accessibility options; tap changes the row, swipe moves to the next row |
+| Hold during a run | Pause; tap to resume, swipe down to abandon the run |
 | Two-finger tap during death | Skip the death rehearsal |
 | Two-finger tap in options | Close options |
 | Two two-finger taps | Recenter yaw and report heading and HP |
@@ -54,6 +55,7 @@ For a blind player: enable headphones, stay on the title until the spoken contro
 - Run bargains are temporary: Foresight, Grace, Iron, and Stillness persist across retries inside one run, add a finale harvest threat, and clear when a new run starts or you win.
 - The Conductor finale has three phases: a drifting voice, a true/decoy harvest, and a final defense followed by a true-bearing swipe.
 - All audio is synthesized at runtime. No external music or SFX assets.
+- The UI is drawn with an original SVG art set ("obsidian & moonlight"): rig-safe engraved linework for the resonance ring and radar dial, shield HP pips, wave diamond pips, prompt glyphs, a title sigil, a victory laurel, and a full-screen vignette. Sources live in `Docs/UI/svg`, are rasterized at 2x by `bash Docs/UI/render.sh` (requires `rsvg-convert`), and load at runtime through `Assets/Resources/UI` with procedural-sprite fallbacks. Edge HUD sits under an Android safe-area inset so notches and overscan cannot clip it. Getting hit flares a short red arc from the attacker's direction on the ring; perfect parries bloom cyan; a half-second hold pauses the run (tap resumes, swipe down abandons).
 - High-contrast text, large touch targets, and no required reading during combat.
 
 ## Build
@@ -67,15 +69,15 @@ For a blind player: enable headphones, stay on the title until the spoken contro
 
 - Debug-signed APK; no release keystore or AAB yet.
 - Audio has been verified by RMS, headless suite, and editor playback, not by a human listening test on the target phone.
-- The current Android APK includes Tier 4 and radar pings but has not been installed or device-tested because no phone is connected.
+- The current Android APK includes the SVG UI art set, Tier 4 checks, and radar pings; it is installed and visually device-tested (title radar, calibration hiding, wave-1 blip, fatal marker) with the previous UI, but the new SVG HUD, safe-area insets, and flash layers are not yet device-verified. Ping audio is still unheard on the phone.
 - Headless verification: `197/197` suite checks and a Victory smoke run at 3 HP in `31.01 s`; Linux build has 0 errors and 974 known warnings.
-- Gyroscope feel, touch latency, TTS timing, and haptics still need a clean-state device pass.
+- Gyroscope feel, touch latency, TTS timing, haptics, and the full Finale/Victory flow still need a clean-state device pass.
 - System TTS uses the phone's installed English voice; without one, the stylized synthesized fallback is not intelligible speech.
 - The synthesized narrator mode is intentionally stylized; subtitles carry the exact wording.
 - No localization, cloud save, or analytics.
 
 ## Credits
 
-Design, code, and procedural audio: Shoaib.
+Design, code, procedural audio, and SVG UI art: Shoaib.
 
 Made with Unity and the Universal Render Pipeline. No third-party art, music, or sound-effect assets are included.

@@ -1,7 +1,7 @@
 # One More Time, Knight - Progress
 
 Last updated: 2026-10-28
-Status: Tier 4 plus radar assist/pings implemented. Latest APK built; device verification is blocked by the disconnected phone.
+Status: Tier 4 plus radar assist/pings implemented. Latest APK installed on the connected Motorola; current-build visual QA is underway, but ping audio is still unheard.
 
 ## Summary
 
@@ -11,7 +11,7 @@ Current state:
 - Full loop implemented: Title, Intro, three waves, interludes, interactive death rehearsal, three-beat Conductor finale, Victory.
 - Permanent Codex/Learned knowledge, run-scoped bargains, narrator captions, procedural audio, and 3D positional cues implemented.
 - Tier 4 headless verification: Linux build passed with 0 errors and 974 known warnings; suite `197/197`; smoke reached Victory at 3 HP in `31.01 s`.
-- Android player settings configured. Latest radar-ping APK built and statically verified; radar title/death visuals were device-tested on an earlier build. The latest APK is not installed because the phone is disconnected.
+- Android player settings configured. Latest radar-ping APK built, installed on the Motorola, and visually device-tested (title radar, options, calibration hiding, wave-1 blip, fatal marker); ping audio is still unheard.
 - Radar assist is optional and off by default: bearing dial/blips plus proximity-pitched pings, hidden during calibration.
 - Audio quality, gyro feel, latency, frame rate, TTS timing, haptics, radar ping mix, and release signing are not yet formally validated.
 
@@ -54,11 +54,11 @@ Changes in this build:
 - Optional radar assist: bearing dial/blips plus gentle descending pings, panned at the target; winding enemy first, otherwise nearest. Pings are gated to `Playing`, silenced while narration is active, and disabled with radar assist.
 - IL2CPP output was checked for `RadarPing`, `UpdateRadarAudio`, and `IsSpeechActive`, confirming the latest source is in the APK.
 - Expanded runtime suite to `197/197`: Grace boundary, cooldown modes, Conjurer/dual-token scheduling, onboarding bearings, narration wait, death rehearsal failures/rejection/skip, fatal cue filtering, timeout and final-defense paths, and reset/repeated-death invariants.
-- The latest APK is not installed because the phone is disconnected; the radar visuals were verified on an earlier device build, but these pings have not been heard on device.
+- The latest APK is installed on the Motorola. Current-build captures verify radar title/options, calibration hiding, wave-1 blips, and the fatal marker; these pings have not been heard on device.
 
 ## Device smoke test (historical, pre-Tier 3 build)
 
-This section records an earlier device smoke test against a pre-Tier 3 APK. It is not evidence for the latest radar-ping APK, which has not been installed.
+This section records an earlier device smoke test against a pre-Tier 3 APK. It is historical; current radar-ping evidence is in the next section.
 
 Device:
 - Motorola `moto g34 5G` (`ZA222JRC3B`)
@@ -86,13 +86,25 @@ Logs:
 - The Unity AI inference/Sentis package emitted many shader warnings. The package is not used by the game; it can be removed later to reduce build noise and size.
 - Logcat showed frame-late entries during `screencap`; these are not a substitute for an FPS measurement.
 
-## Radar device verification (earlier build)
+## Radar device verification (earlier pre-ping build)
 
 - Radar assist was enabled manually and captured on the Motorola device before the latest ping build.
 - Title capture showed `HDG 337°` with the wave-1 Stalker blip at 3 o'clock, matching azimuth `62°` against player yaw `337°`.
 - Death capture showed the red fatal bearing blip at the right edge with `HP 0/4` and `ATTEMPT 2`; HUD health is text-only, so there are no heart sprites.
 - The death capture was clean after notifications cleared: `/tmp/radar_play_clean.png`. The title capture still had a Discord overlay: `/tmp/radar_title2.png`.
 - This verifies radar rendering, bearing mapping, and the fatal marker. Finale/calibration visuals are implemented but still need device captures; the latest ping audio is unverified.
+
+## Current Android device pass (radar-ping build)
+
+- Latest APK installed with `adb install -r`; `pm clear` produced clean progress; the app launched without a startup crash.
+- Title with radar on: `Docs/screenshots/device-title-radar.png`; `HDG 353°`, dial, labels, and CTA rendered cleanly.
+- Options showed `RADAR ASSIST: ON`; toggling produced `RADAR ASSIST: OFF` and hid the dial. Hardware `O` closed options; hardware Escape did not reliably close them in this build.
+- Calibration hid the radar entirely: `Docs/screenshots/device-calibration-radar-hidden.png` shows only the ring, `CALIBRATION`, and `TURN`.
+- Wave 1 showed the cyan Stalker blip and `HDG 000°`: `Docs/screenshots/device-wave1-radar.png`.
+- Death showed the red fatal blip at the true bearing, `HP 0/3`, and auto-retry attempts: `Docs/screenshots/device-death-radar.png`.
+- The phone's `STREAM_MUSIC` was initially muted at volume 0, so earlier phone audio checks were silent. It was raised to 12/15; `dumpsys audio` then showed the app's AAudio player active at 24 kHz stereo. Pings remain unheard by a human.
+- The captured log tail had no Unity exceptions; `ComposerExtn` frame-late messages appeared during `screencap` only.
+- Still unheard: ping level, pitch, stereo panning, cadence, and narration ducking. Finale and multi-enemy visuals still need current-build captures.
 
 ## Implemented
 
@@ -141,29 +153,27 @@ Editor QA completed earlier:
 
 ## Known issues and risks
 
-- Device audio has not been listened to on the actual phone; speaker/headphone mix and latency remain unverified.
-- The latest radar ping build has not been installed; ping level, pitch, panning, cadence, and narration ducking are unheard.
+- Device audio has not been listened to on the actual phone; speaker/headphone mix and latency remain unverified. The media stream was initially muted at 0 and has been raised for testing.
+- Ping level, pitch, panning, cadence, and narration ducking are still unheard on the phone; the latest APK is visually verified.
 - Gyro turning has not been measured quantitatively on device.
 - No device FPS, thermal, battery, or long-session test has been run.
 - Release signing is not configured. The APK is debug-signed and cannot be shipped to a store as-is.
 - No AAB has been built.
-- The historical `ATTEMPT 2`/`HP 3/4` device capture predates the fixed three-heart redesign; clean-state behavior must be re-tested on the current APK after `pm clear`.
+- Current clean-state capture showed `HP 3/3` during the intro and `HP 0/3` at death; the historical `HP 3/4` did not reproduce.
 - Five editor screenshots were refreshed from the current build: title, intro, interlude, wave three, and victory under `Assets/Screenshots/`. The gameplay shot is intentionally minimal because the game is audio-first; it shows the ring, HUD, and `LISTEN` prompt.
-- Radar screenshots exist only in `/tmp`; a clean title/gameplay/finale set still needs capture. `/tmp/radar_title2.png` has a Discord overlay; `/tmp/radar_play_clean.png` is clean but is a death state.
+- Current radar captures are checked into `Docs/screenshots/`; a clean Finale/multi-enemy set is still missing.
 - The URP post-processing shaders stripped at build time mean Depth of Field and Panini passes are unavailable. The game does not depend on them, but the warnings should be cleaned up.
 - The Unity AI/Sentis package produces unrelated shader warnings and adds build/package weight.
 - Submission assets: five editor screenshots and `README.md` are present; trailer, pitch deck, and AAB are still pending.
-- The phone is not connected, so the latest radar-ping build has not been installed. The last device build verified radar visuals but predates the pings.
+- The phone is connected and current-build visual QA is underway; audio, gyro/touch feel, FPS, Finale, and full progression remain.
 - `OMTKPlaytest` is editor-only and is not present in the Android build; do not expect autoplay on device.
 
 ## Next steps
 
-1. Reconnect the phone (`ZA222JRC3B`) with USB debugging unlocked; confirm `adb devices -l`.
-2. Install the latest APK and clean state with `adb shell pm clear com.shoaib.onemoretimeknight`.
-3. Run a radar-focused device pass: assist off/on, wave 1 and wave 3 multi-enemy blips, Finale conductor, fatal death marker, calibration hiding, and ping panning/cadence. Listen on headphones and the phone speaker.
-4. Run the remaining controlled device pass: death rehearsal, bargain accept/reject, Codex reset, three-beat Finale, and Victory.
-5. Measure gyro/touch feel and frame rate; check `adb shell dumpsys gfxinfo com.shoaib.onemoretimeknight` and a device profiler capture.
-6. Capture clean radar title/gameplay/finale screenshots; then configure release signing, build an AAB, and finish submission assets.
+1. Listen to pings and cues on headphones and the phone speaker; confirm cadence, stereo panning, volume, pitch, and narration ducking.
+2. Finish the current-build device pass: radar off/on, wave 3 multi-enemy blips, Finale conductor, death rehearsal, bargain accept/reject, Codex reset, and Victory.
+3. Measure gyro/touch feel and frame rate; check `adb shell dumpsys gfxinfo com.shoaib.onemoretimeknight` and a device profiler capture.
+4. Capture clean Finale/multi-enemy screenshots; then configure release signing, build an AAB, and finish submission assets.
 
 ## Commands
 
@@ -198,6 +208,9 @@ $ADB shell pm clear com.shoaib.onemoretimeknight
 - `Assets/Scripts/OMTK/OMTKAudio.cs` - sources, ducking, voice cache, conductor hum.
 - `Assets/Scripts/OMTK/AudioSynth.cs` - procedural audio generation.
 - `Assets/Scripts/OMTK/OMTKConfig.cs` - constants, enemy variants, Codex/bargain metadata.
+- `Assets/Scripts/OMTK/OmtkArt.cs` - cached loader for the SVG-rendered UI textures (`Assets/Resources/UI`).
+- `Assets/Editor/OmtkArtImport.cs` - import settings for the UI art set (HQ compression, trilinear mips).
+- `Docs/UI/svg` + `Docs/UI/render.sh` - 21 hand-written SVG sources and the 2x `rsvg-convert` pipeline; `Docs/UI/preview.html` mirrors the HUD layout.
 - `Assets/Scripts/OMTK/OMTKBootstrap.cs` - runtime bootstrap.
 - `Assets/Scripts/OMTK/OMTKPlaytest.cs` - editor-only autoplay/QA driver.
 - `Assets/Editor/OMTKBuild.cs` - PlayerSettings and Android/Linux build menu.
@@ -207,8 +220,8 @@ $ADB shell pm clear com.shoaib.onemoretimeknight
 - `Docs/JamPrototypePlan.md` - earlier prototype plan.
 - `Docs/AssetStoreInventory.md` / `.csv` - 733-package asset inventory.
 - `AgentScripts/DumpMyAssets.cs` / `FetchDetails.cs` - asset inspection utilities.
-- `Builds/Android/OneMoreTimeKnight.apk` - latest radar-ping debug-signed ARM64 APK; not installed.
+- `Builds/Android/OneMoreTimeKnight.apk` - latest radar-ping debug-signed ARM64 APK; installed on `ZA222JRC3B`.
 - `/tmp/omtk_radar_ping_build3.log` - successful latest Android build, including IL2CPP generation.
 - `README.md` - controls, radar assist, accessibility, build/run notes.
 - `Docs/screenshots/device-title.png` and `device-victory.png` - historical device smoke-test evidence.
-- `/tmp/radar_title2.png`, `/tmp/radar_play_clean.png`, `/tmp/radar_blip_crop.png` - radar device captures; latest ping build not represented.
+- `Docs/screenshots/device-title-radar.png`, `device-calibration-radar-hidden.png`, `device-wave1-radar.png`, `device-death-radar.png` - current radar-ping device captures.
