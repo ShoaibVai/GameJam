@@ -21,6 +21,14 @@ namespace OMTK
 
     public class OMTKGame : MonoBehaviour
     {
+        private enum ConductorEdit
+        {
+            None,
+            SwapCast,
+            Hasten,
+            AddVoice
+        }
+
         public GameState State { get; private set; }
         public int Hp { get; private set; }
         public int MaxHp { get; private set; }
@@ -28,7 +36,15 @@ namespace OMTK
         public int Attempt { get; private set; }
         public int Deaths { get; private set; }
         public int BestWave { get; private set; }
-        public int EchoMask { get; private set; }
+        public int CodexMask { get; private set; }
+        public int LearnedMask { get; private set; }
+        public int RunEchoMask { get; private set; }
+        public int ConductorResonance { get; private set; }
+        public int EchoMask
+        {
+            get { return CodexMask; }
+        }
+
         public float PlayerYaw { get; private set; }
         public float StateTime { get; private set; }
         public OMTKAudio Audio { get; private set; }
@@ -40,12 +56,17 @@ namespace OMTK
 
         public float PerfectWindow
         {
-            get { return OMTKConfig.PerfectWindow; }
+            get { return HasEcho(EchoId.Grace) ? OMTKConfig.GracePerfectWindow : OMTKConfig.PerfectWindow; }
         }
 
         public float PerfectParryAngle
         {
-            get { return OMTKConfig.PerfectParryAngle; }
+            get { return HasEcho(EchoId.Grace) ? OMTKConfig.GracePerfectParryAngle : OMTKConfig.PerfectParryAngle; }
+        }
+
+        public bool RehearsalBonusActive
+        {
+            get { return rehearsalBonusVariant.HasValue && rehearsalBonusAttempt == Attempt; }
         }
 
         public float GuardLockoutRemaining
@@ -70,8 +91,17 @@ namespace OMTK
         private Text subtitleText;
         private Text promptText;
         private Font uiFont;
-        private OMTKEnemy token;
+        private OMTKEnemy primaryToken;
+        private OMTKEnemy offbeatToken;
+        private OMTKEnemy pendingToken;
+        private bool pendingIsOffbeat;
+        private float pendingLead;
+        private float offbeatDelay;
         private float windupCooldown;
+        private bool waitForSpeech;
+        private ConductorEdit conductorEdit;
+        private Coroutine timeDipRoutine;
+        private bool timeDipActive;
         private float guardLockout;
         private float introDuration;
         private float interludeDuration;
@@ -79,8 +109,30 @@ namespace OMTK
         private float parryFlash;
         private float damageFlash;
         private float ringPulse;
-        private float finaleNudge;
-        private bool finaleFacing;
+        private int finaleBeat;
+        private float finaleBearing;
+        private bool finaleDriftStarted;
+        private int finaleThreatsRemaining;
+        private int finaleThreatIndex;
+        private bool finaleThreatActive;
+        private bool finaleThreatResolved;
+        private bool finaleThreatCuePlayed;
+        private float finaleThreatStartedAt;
+        private float finaleThreatCueAt;
+        private float finaleThreatWindowStart;
+        private float finaleThreatWindowEnd;
+        private float finaleThreatDeadline;
+        private float finaleTrueBearing;
+        private float finaleDecoyBearing;
+        private int finaleShiftDirection = 1;
+        private bool finaleFinalDefended;
+        private bool finaleFinalCuePlayed;
+        private float finaleFinalCueAt;
+        private float finaleFinalWindowStart;
+        private float finaleFinalWindowEnd;
+        private float finaleFinalDeadline;
+        private bool finaleEnding;
+        private float finaleNextThreatAt;
         private bool echoAnnounced;
         private bool gyroEnabled;
         private bool pointerHeld;
@@ -93,7 +145,6 @@ namespace OMTK
         private float resumeTimeScale = 1f;
         private AudioClip fatalClip;
         private Vector3 fatalPosition;
-        private bool fatalReplayPlayed;
         private OMTKSystemTts systemTts;
         private int narratorMode;
         private bool hapticsEnabled;
@@ -118,15 +169,37 @@ namespace OMTK
         private bool tutorialWindupStarted;
         private float tutorialDeathTimer;
         private bool currentDeathTutorial;
+        private EnemyVariant? rehearsalBonusVariant;
+        private int rehearsalBonusAttempt;
+        private readonly int[] trainingChimeCharges = new int[3];
+        private float fatalAzimuth;
+        private EnemyVariant fatalVariant;
+        private bool deathNotePlayed;
+        private bool deathResolved;
+        private bool deathAligned;
+        private bool deathCueActive;
+        private float deathNextCueAt;
+        private float deathWindowStart = -1f;
+        private float deathWindowEnd = -1f;
+        private float deathRetryAt;
+        private int deathTapCount;
+        private float deathTapDeadline;
+        private int offeredBargain = -1;
+        private bool bargainOffered;
+        private bool bargainAccepted;
+        private bool bargainRejected;
+        private bool ironShieldAvailable;
 
         private const string DeathsKey = "OMTK_Deaths";
         private const string BestWaveKey = "OMTK_BestWave";
         private const string EchoKey = "OMTK_EchoMask";
+        private const string CodexKey = "OMTK_CodexMask";
+        private const string LearnedKey = "OMTK_LearnedMask";
         private const string NarratorKey = "OMTK_NarratorMode";
         private const string HapticsKey = "OMTK_Haptics";
         private const string RadarAssistKey = "OMTK_RadarAssist";
         private const string VolumeKey = "OMTK_Volume";
-        private const int OptionsCount = 4;
+        private const int OptionsCount = 5;
         private const float VolumeStep = 0.25f;
         private const float TwoFingerTapWindow = 0.34f;
         private const float TwoFingerMaxTapDuration = 0.55f;
@@ -250,7 +323,137 @@ namespace OMTK
 
         public bool HasEcho(EchoId id)
         {
-            return false;
+            return (RunEchoMask & OMTKConfig.EchoBit(id)) != 0;
+        }
+
+        public float WindupScaleFor(EnemyVariant variant)
+        {
+            float scale = 1f;
+            if (rehearsalBonusVariant.HasValue && rehearsalBonusAttempt == Attempt && rehearsalBonusVariant.Value == variant)
+            {
+                scale *= OMTKConfig.RehearsalWindupScale;
+            }
+
+            if (HasEcho(EchoId.Stillness))
+            {
+                scale *= 1.12f;
+            }
+
+            return scale;
+        }
+
+        public bool TryTrainingChime(EnemyVariant variant, Vector3 position)
+        {
+            int bit = OMTKConfig.CodexBit(variant);
+            if ((CodexMask & bit) == 0 || (LearnedMask & bit) != 0)
+            {
+                return false;
+            }
+
+            int index = (int)variant;
+            if (index < 0 || index >= trainingChimeCharges.Length || trainingChimeCharges[index] <= 0)
+            {
+                return false;
+            }
+
+            trainingChimeCharges[index]--;
+            Audio.PlayAt(Audio.ForesightClip, position, 0.68f, 1.12f);
+            return true;
+        }
+
+        public void RecordCodexDiscovery(EnemyVariant variant)
+        {
+            int bit = OMTKConfig.CodexBit(variant);
+            if ((CodexMask & bit) != 0)
+            {
+                return;
+            }
+
+            CodexMask |= bit;
+            SaveProgress();
+        }
+
+        private void ResetTrainingChimes()
+        {
+            for (int i = 0; i < trainingChimeCharges.Length; i++)
+            {
+                trainingChimeCharges[i] = OMTKConfig.TrainingChimeCharges;
+            }
+        }
+
+        private int NextEligibleBargain()
+        {
+            for (int i = 0; i < OMTKConfig.AllEchoes.Length; i++)
+            {
+                EchoId id = OMTKConfig.AllEchoes[i];
+                if ((RunEchoMask & OMTKConfig.EchoBit(id)) == 0)
+                {
+                    return (int)id;
+                }
+            }
+
+            return -1;
+        }
+
+        private bool TryAcceptBargain()
+        {
+            if (!bargainOffered || bargainAccepted || offeredBargain < 0)
+            {
+                return false;
+            }
+
+            EchoId id = (EchoId)offeredBargain;
+            RunEchoMask |= OMTKConfig.EchoBit(id);
+            ConductorResonance++;
+            bargainAccepted = true;
+            bargainOffered = false;
+            if (id == EchoId.Iron)
+            {
+                ironShieldAvailable = true;
+            }
+
+            Audio.Play2D(Audio.EchoUnlockClip, 0.72f, 1.18f);
+            Narrator(OMTKConfig.EchoName(id) + ". " + OMTKConfig.EchoHint(id), 1.9f);
+            promptText.text = "TRACE";
+            return true;
+        }
+
+        private bool TryConsumeIronShield()
+        {
+            if (!ironShieldAvailable || !HasEcho(EchoId.Iron))
+            {
+                return false;
+            }
+
+            ironShieldAvailable = false;
+            RunEchoMask &= ~OMTKConfig.EchoBit(EchoId.Iron);
+            return true;
+        }
+
+        private void ClearRunBargains()
+        {
+            RunEchoMask = 0;
+            ConductorResonance = 0;
+            ironShieldAvailable = false;
+        }
+
+        private void RecordPerfectMastery(OMTKEnemy enemy)
+        {
+            if (enemy == null || enemy.TrainingCuePlayed)
+            {
+                return;
+            }
+
+            int bit = OMTKConfig.CodexBit(enemy.Variant);
+            if ((CodexMask & bit) == 0 || (LearnedMask & bit) != 0)
+            {
+                return;
+            }
+
+            LearnedMask |= bit;
+            SaveProgress();
+            Audio.Play2D(Audio.EchoUnlockClip, 0.7f, 1.2f);
+            Narrator(OMTKConfig.CodexName(enemy.Variant) + " mastered. The training tone is gone.", 1.8f);
         }
 
         public void EnemyAttack(OMTKEnemy enemy)
@@ -260,8 +463,33 @@ namespace OMTK
                 return;
             }
 
-            token = null;
-            windupCooldown = narratorMode == 0 ? 1.7f : 1.15f;
+            CancelTimeDip();
+            for (int i = 0; i < enemies.Count; i++)
+            {
+                if (enemies[i] != enemy)
+                {
+                    enemies[i].Interrupt();
+                }
+
+                enemies[i].CancelDecoy();
+            }
+
+            primaryToken = null;
+            offbeatToken = null;
+            pendingToken = null;
+            offbeatDelay = 0f;
+            waitForSpeech = false;
+            windupCooldown = OMTKConfig.AttackCooldown;
+            if (TryConsumeIronShield())
+            {
+                damageFlash = 0.65f;
+                PulseHaptic();
+                Audio.Play2D(Audio.ParryClip, 0.9f, 0.82f);
+                ShowSubtitle("Iron holds. Once.", 1.05f);
+                promptText.text = "LISTEN";
+                return;
+            }
+
             if (tutorialDeathActive && enemy == tutorialKiller)
             {
                 Hp = 1;
@@ -286,10 +514,7 @@ namespace OMTK
 
         private void UpdatePlaying(float deltaTime)
         {
-            if (token != null && (!token.IsAlive || !token.IsWindingUp))
-            {
-                token = null;
-            }
+            UpdateAttention();
 
             for (int i = 0; i < enemies.Count; i++)
             {
@@ -297,8 +522,11 @@ namespace OMTK
             }
 
             enemies.RemoveAll(enemy => !enemy.IsAlive);
-
             UpdateTutorialDeath(deltaTime);
+            if (State != GameState.Playing)
+            {
+                return;
+            }
 
             if (enemies.Count == 0)
             {
@@ -314,45 +542,194 @@ namespace OMTK
                 return;
             }
 
-            if (token == null)
-            {
-                windupCooldown -= deltaTime;
-                if (windupCooldown <= 0f)
-                {
-                    OMTKEnemy chosen = null;
-                    for (int i = 0; i < enemies.Count; i++)
-                    {
-                        if (enemies[i].AtTarget)
-                        {
-                            chosen = enemies[i];
-                            break;
-                        }
-                    }
+            UpdateTokenScheduler(deltaTime);
+        }
 
-                    if (chosen != null && chosen.BeginWindup())
+        private void UpdateAttention()
+        {
+            OMTKEnemy attended = null;
+            float closest = 361f;
+            for (int i = 0; i < enemies.Count; i++)
+            {
+                OMTKEnemy enemy = enemies[i];
+                if (enemy == null || !enemy.IsAlive)
+                {
+                    continue;
+                }
+
+                float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, enemy.Azimuth));
+                if (angle < closest)
+                {
+                    closest = angle;
+                    attended = enemy;
+                }
+            }
+
+            for (int i = 0; i < enemies.Count; i++)
+            {
+                OMTKEnemy enemy = enemies[i];
+                if (enemy == null)
+                {
+                    continue;
+                }
+
+                enemy.SetAttention(enemy == attended || enemies.Count == 1 ? 1f : 0.35f);
+            }
+        }
+
+        private void UpdateTokenScheduler(float deltaTime)
+        {
+            if (primaryToken != null && (!primaryToken.IsAlive || !primaryToken.IsWindingUp))
+            {
+                primaryToken = null;
+            }
+
+            if (offbeatToken != null && (!offbeatToken.IsAlive || !offbeatToken.IsWindingUp))
+            {
+                offbeatToken = null;
+            }
+
+            if (pendingToken != null && !pendingToken.IsAlive)
+            {
+                pendingToken = null;
+            }
+
+            if (pendingToken != null)
+            {
+                pendingLead -= deltaTime;
+                if (pendingLead <= 0f)
+                {
+                    OMTKEnemy enemy = pendingToken;
+                    bool offbeat = pendingIsOffbeat;
+                    pendingToken = null;
+                    LaunchWindup(enemy, offbeat);
+                }
+            }
+
+            if (offbeatDelay > 0f)
+            {
+                offbeatDelay -= deltaTime;
+                if (offbeatDelay <= 0f)
+                {
+                    offbeatDelay = 0f;
+                    OMTKEnemy offbeat = FindAtTarget(null, primaryToken);
+                    if (offbeat != null)
                     {
-                        token = chosen;
-                        RememberLastCue(token.WindupClip, token.Position, 0.9f, 1f, false);
+                        QueueWindup(offbeat, true);
                     }
                 }
             }
+
+            if (primaryToken != null || offbeatToken != null || pendingToken != null)
+            {
+                return;
+            }
+
+            if (waitForSpeech)
+            {
+                if (!Audio.IsSpeechActive)
+                {
+                    waitForSpeech = false;
+                }
+
+                return;
+            }
+
+            windupCooldown -= deltaTime;
+            if (windupCooldown > 0f)
+            {
+                return;
+            }
+
+            OMTKEnemy chosen = FindAtTarget(null, null);
+            if (chosen != null)
+            {
+                QueueWindup(chosen, false);
+            }
+        }
+
+        private OMTKEnemy FindAtTarget(OMTKEnemy excludeA, OMTKEnemy excludeB)
+        {
+            for (int i = 0; i < enemies.Count; i++)
+            {
+                OMTKEnemy enemy = enemies[i];
+                if (enemy == null || !enemy.IsAlive || enemy == excludeA || enemy == excludeB)
+                {
+                    continue;
+                }
+
+                if (enemy.AtTarget)
+                {
+                    return enemy;
+                }
+            }
+
+            return null;
+        }
+
+        private void QueueWindup(OMTKEnemy enemy, bool offbeat)
+        {
+            if (enemy == null)
+            {
+                return;
+            }
+
+            if (enemy.Variant == EnemyVariant.Conjurer && enemy.BeginDecoyWindup())
+            {
+                pendingToken = enemy;
+                pendingIsOffbeat = offbeat;
+                pendingLead = OMTKConfig.ConjurerDecoyLead;
+                return;
+            }
+
+            LaunchWindup(enemy, offbeat);
+        }
+
+        private void LaunchWindup(OMTKEnemy enemy, bool offbeat)
+        {
+            if (enemy == null || !enemy.BeginWindup())
+            {
+                return;
+            }
+
+            if (offbeat)
+            {
+                offbeatToken = enemy;
+            }
+            else
+            {
+                primaryToken = enemy;
+                offbeatDelay = Wave >= 3 || Attempt >= 3 ? OMTKConfig.OffbeatWindupDelay : 0f;
+            }
+
+            RememberLastCue(enemy.WindupClip, enemy.Position, 0.9f, 1f, false);
         }
 
         private void StartRun()
         {
             optionsOpen = false;
             Attempt = 1;
+            conductorEdit = ConductorEdit.None;
             Wave = 1;
             Hp = MaxHp;
+            RunEchoMask = 0;
+            ConductorResonance = 0;
+            ironShieldAvailable = false;
+            rehearsalBonusVariant = null;
+            rehearsalBonusAttempt = 0;
+            ResetTrainingChimes();
+            ClearDeathRehearsal();
             guardLockout = 0f;
             calibrationDone = false;
             calibrationAlignedAnnounced = false;
+            waitForSpeech = false;
             ClearTutorial();
             ClearEnemies();
             Audio.StopTinnitus();
             Audio.StopCalibration();
             Audio.Unduck();
             Audio.PlayMusic();
+            Audio.SetTension(false);
             Audio.StopConductor();
             RecenterYaw();
             introDuration = OMTKConfig.RunIntroDuration;
@@ -365,8 +742,12 @@ namespace OMTK
         private void Retry()
         {
             Attempt++;
+            RollConductorEdit();
             Wave = 1;
             Hp = MaxHp;
+            ResetTrainingChimes();
+            ClearDeathRehearsal();
+            waitForSpeech = false;
             guardLockout = 0f;
             ClearTutorial();
             ClearEnemies();
@@ -374,13 +755,15 @@ namespace OMTK
             Audio.StopCalibration();
             Audio.Unduck();
             Audio.PlayMusic();
+            Audio.SetTension(false);
             Audio.StopConductor();
             RecenterYaw();
             introDuration = 1.65f;
             SetState(GameState.Intro);
-            ShowSubtitle("Again. Listen.", 1.6f);
+            string hint = ConductorHint();
+            ShowSubtitle("Again. " + hint, 1.8f);
             promptText.text = "LISTEN";
-            Audio.Speak("Again.");
+            Audio.Speak("Again. " + hint);
         }
 
         private void StartCalibration()
@@ -460,13 +843,22 @@ namespace OMTK
             Hp = Mathf.Min(MaxHp, Hp + (wave > 1 ? 1 : 0));
             guardLockout = 0f;
             ClearEnemies();
-            windupCooldown = narratorMode == 0 ? 2.55f : 1.65f;
+            CancelTimeDip();
+            primaryToken = null;
+            offbeatToken = null;
+            pendingToken = null;
+            offbeatDelay = 0f;
+            waitForSpeech = true;
+            windupCooldown = OMTKConfig.WaveStartCooldown;
             SetState(GameState.Playing);
             RecenterYaw();
+            Audio.SetTension(wave >= 3);
 
             if (wave == 1)
             {
-                float bearing = Attempt == 1 ? OMTKConfig.CalibrationAzimuth : 62f;
+                float bearing = Attempt == 1
+                    ? OMTKConfig.CalibrationAzimuth
+                    : RandomizedBearing(62f, OMTKConfig.StalkerBearingJitter);
                 Spawn(EnemyVariant.Stalker, bearing);
                 if (Attempt == 1)
                 {
@@ -482,18 +874,118 @@ namespace OMTK
             }
             else if (wave == 2)
             {
-                Spawn(EnemyVariant.Charger, -74f);
+                float bearing = Attempt == 1
+                    ? -74f
+                    : RandomizedBearing(-74f, OMTKConfig.ChargerBearingJitter);
+                EnemyVariant variant = conductorEdit == ConductorEdit.SwapCast ? EnemyVariant.Stalker : EnemyVariant.Charger;
+                Spawn(variant, bearing);
+                if (Attempt >= 3)
+                {
+                    Spawn(EnemyVariant.Stalker, Mathf.Repeat(bearing + 180f, 360f));
+                }
+
                 Narrator("Wave two. It learns your rhythm.", 2.25f);
             }
             else
             {
-                Spawn(EnemyVariant.Conjurer, 142f);
-                Spawn(EnemyVariant.Stalker, -38f);
+                float firstBearing = Attempt == 1
+                    ? 142f
+                    : RandomizedBearing(142f, OMTKConfig.ConjurerBearingJitter);
+                float secondBearing = Attempt == 1
+                    ? -38f
+                    : EnsureSeparation(firstBearing, RandomizedBearing(-38f, OMTKConfig.StalkerBearingJitter), OMTKConfig.MinEnemySeparation);
+                EnemyVariant secondVariant = conductorEdit == ConductorEdit.SwapCast ? EnemyVariant.Charger : EnemyVariant.Stalker;
+                Spawn(EnemyVariant.Conjurer, firstBearing);
+                Spawn(secondVariant, secondBearing);
+
+                if (Attempt >= 3 || conductorEdit == ConductorEdit.AddVoice)
+                {
+                    Spawn(EnemyVariant.Stalker, FindOpenBearing(firstBearing, secondBearing));
+                }
+
                 Narrator("Wave three. Do not trust the silence.", 2.25f);
+            }
+
+            float approachScale = 1f + Mathf.Min(0.3f, (Attempt - 1) * 0.07f);
+            if (conductorEdit == ConductorEdit.Hasten)
+            {
+                approachScale += 0.18f;
+            }
+
+            for (int i = 0; i < enemies.Count; i++)
+            {
+                enemies[i].SetApproachScale(approachScale);
             }
 
             promptText.text = "LISTEN";
             titleText.gameObject.SetActive(false);
+        }
+
+        private void RollConductorEdit()
+        {
+            if (Attempt < 2)
+            {
+                conductorEdit = ConductorEdit.None;
+                return;
+            }
+
+            conductorEdit = (ConductorEdit)Random.Range(1, 3 + 1);
+        }
+
+        private string ConductorHint()
+        {
+            if (conductorEdit == ConductorEdit.SwapCast)
+            {
+                return "The Conductor changes the cast.";
+            }
+
+            if (conductorEdit == ConductorEdit.Hasten)
+            {
+                return "The Conductor hastens the approach.";
+            }
+
+            if (conductorEdit == ConductorEdit.AddVoice)
+            {
+                return "The Conductor adds a voice.";
+            }
+
+            return "Listen.";
+        }
+
+        private static float RandomizedBearing(float baseBearing, float jitter)
+        {
+            return Mathf.Repeat(baseBearing + Random.Range(-jitter, jitter), 360f);
+        }
+
+        private static float EnsureSeparation(float first, float second, float minimum)
+        {
+            float delta = Mathf.Abs(Mathf.DeltaAngle(first, second));
+            if (delta >= minimum)
+            {
+                return second;
+            }
+
+            return Mathf.Repeat(first + minimum, 360f);
+        }
+
+        private static float FindOpenBearing(float first, float second)
+        {
+            float best = 0f;
+            float bestScore = -1f;
+            for (int i = 0; i < 72; i++)
+            {
+                float candidate = i * 5f;
+                float score = Mathf.Min(
+                    Mathf.Abs(Mathf.DeltaAngle(candidate, first)),
+                    Mathf.Abs(Mathf.DeltaAngle(candidate, second)));
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = candidate;
+                }
+            }
+
+            return best;
         }
 
         private void UpdateTutorialDeath(float deltaTime)
@@ -515,8 +1007,8 @@ namespace OMTK
                 tutorialWindupStarted = true;
                 if (tutorialKiller.BeginScriptedWindup(OMTKConfig.TutorialFirstDeathWindup))
                 {
-                    token = tutorialKiller;
-                    RememberLastCue(token.WindupClip, token.Position, 0.9f, 1f, false);
+                    primaryToken = tutorialKiller;
+                    RememberLastCue(primaryToken.WindupClip, primaryToken.Position, 0.9f, 1f, false);
                     ShowSubtitle("The first cut is inevitable.", 1.1f);
                     promptText.text = "LISTEN";
                 }
@@ -526,6 +1018,7 @@ namespace OMTK
         private void StartInterlude()
         {
             SetState(GameState.Interlude);
+            Audio.SetTension(false);
             interludeDuration = 2.35f;
             Hp = Mathf.Min(MaxHp, Hp + 1);
             damageFlash = 0f;
@@ -537,150 +1030,468 @@ namespace OMTK
         private void StartFinale()
         {
             ClearEnemies();
+            Audio.StopConductor();
             SetState(GameState.Finale);
+            Audio.SetTension(true);
             Audio.Duck(0.82f);
-            Audio.StartConductor(new Vector3(0f, 0f, -4f));
-            finaleFacing = false;
-            finaleNudge = 0f;
-            ShowSubtitle("The Conductor is behind you. Turn.", 2.2f);
-            promptText.text = "TURN";
-            Audio.Speak("The Conductor is behind you. Turn.");
+            Audio.PlayMusic();
+            finaleBeat = 1;
+            finaleBearing = 0f;
+            finaleDriftStarted = false;
+            finaleThreatsRemaining = 0;
+            finaleThreatIndex = 0;
+            finaleThreatActive = false;
+            finaleThreatResolved = false;
+            finaleThreatCuePlayed = false;
+            finaleNextThreatAt = 0f;
+            finaleFinalDefended = false;
+            finaleFinalCuePlayed = false;
+            finaleEnding = false;
+            ShowSubtitle("The Conductor speaks.", 2.2f);
+            promptText.text = "LISTEN";
+            Audio.Speak("You learned every echo but mine. Listen.");
         }
 
         private void UpdateFinale()
         {
-            Audio.UpdateConductor(PlayerYaw);
-            float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, 180f));
-
-            if (!finaleFacing && angle <= OMTKConfig.FinaleTurnWindow && StateTime >= 0.65f)
+            if (finaleEnding)
             {
-                finaleFacing = true;
-                Audio.Play2D(Audio.ConductorReadyClip, 0.9f);
-                RememberLastCue(Audio.ConductorReadyClip, new Vector3(0f, 0f, -4f), 0.9f, 1f, false);
-                Narrator("Now. Swipe.", 1.4f);
-                promptText.text = "SWIPE";
+                return;
             }
 
-            if (!finaleFacing && StateTime - finaleNudge > 4.5f)
+            if (finaleBeat == 1)
             {
-                finaleNudge = StateTime;
-                Narrator("Turn toward the voice.", 1.6f);
+                UpdateFinaleDrift();
+            }
+            else if (finaleBeat == 2)
+            {
+                UpdateFinaleHarvest();
+            }
+            else
+            {
+                UpdateFinaleClimax();
             }
         }
 
-        private void StartDeath(OMTKEnemy killer)
+        private void UpdateFinaleDrift()
         {
-            SetState(GameState.Death);
-            Hp = 0;
-            Deaths++;
-            BestWave = Mathf.Max(BestWave, Wave);
-            SaveProgress();
-            token = null;
-            for (int i = 0; i < enemies.Count; i++)
+            if (!finaleDriftStarted && StateTime >= OMTKConfig.FinaleDriftStart)
             {
-                enemies[i].Stop();
+                finaleDriftStarted = true;
+                Audio.StartConductor(Vector3.forward * 4f);
+                Audio.PlayConductorSpatial("Do you hear me now?", 0f);
             }
 
-            echoAnnounced = false;
-            guardLockout = 0f;
-            damageFlash = 1f;
-            PulseHaptic();
-            Audio.StopTinnitus();
-            currentDeathTutorial = tutorialDeathActive;
-            tutorialDeathActive = false;
-            tutorialWindupStarted = false;
-            tutorialKiller = null;
-            fatalClip = killer.WindupClip;
-            fatalPosition = killer.Position;
-            RememberLastCue(fatalClip, fatalPosition, 0.9f, 0.62f, true);
-            fatalReplayPlayed = false;
-            Audio.StopVoice();
-            Audio.PlayFatal(fatalClip, fatalPosition);
-            Audio.Play2D(Audio.HeartbeatClip, 0.9f);
-            ShowSubtitle("One more time.", 1.45f);
-            promptText.text = string.Empty;
-            Audio.Speak("One more time.");
+            if (!finaleDriftStarted)
+            {
+                return;
+            }
+
+            float progress = Mathf.Clamp01((StateTime - OMTKConfig.FinaleDriftStart) / OMTKConfig.FinaleDriftDuration);
+            finaleBearing = Mathf.LerpAngle(0f, 180f, progress);
+            Audio.UpdateConductor(PlayerYaw, finaleBearing);
+            if (progress >= 1f)
+            {
+                StartFinaleHarvest();
+            }
         }
 
-        private void UpdateDeath()
+        private void StartFinaleHarvest()
         {
-            if (!echoAnnounced && StateTime >= 1.05f)
+            finaleBeat = 2;
+            finaleThreatsRemaining = 1 + ConductorResonance;
+            finaleThreatIndex = 0;
+            finaleTrueBearing = 180f;
+            finaleShiftDirection = 1;
+            finaleBearing = finaleTrueBearing;
+            Audio.SetConductorBearing(finaleBearing);
+            Audio.PlayConductorSpatial("You gave me this.", finaleBearing);
+            ShowSubtitle("The harvest begins.", 1.2f);
+            StartFinaleThreat();
+        }
+
+        private void StartFinaleThreat()
+        {
+            if (finaleThreatsRemaining <= 0)
             {
-                echoAnnounced = true;
-                if (currentDeathTutorial)
+                BeginFinaleClimax();
+                return;
+            }
+
+            finaleThreatActive = true;
+            finaleThreatResolved = false;
+            finaleThreatCuePlayed = false;
+            finaleThreatStartedAt = StateTime;
+            finaleThreatCueAt = StateTime + OMTKConfig.FinaleThreatLead;
+            finaleThreatWindowStart = StateTime + OMTKConfig.FinaleThreatWindowDelay;
+            finaleThreatWindowEnd = finaleThreatWindowStart + OMTKConfig.FinaleThreatWindowDuration;
+            finaleThreatDeadline = StateTime + OMTKConfig.FinaleThreatDeadline;
+            finaleDecoyBearing = Mathf.Repeat(finaleTrueBearing + (finaleThreatIndex % 2 == 0 ? 90f : -90f), 360f);
+            finaleBearing = finaleTrueBearing;
+            Audio.SetConductorBearing(finaleBearing);
+            ShowSubtitle(DeceptiveFinalePrompt(), 0.95f);
+            promptText.text = "LISTEN";
+        }
+
+        private string DeceptiveFinalePrompt()
+        {
+            int choice = finaleThreatIndex % 3;
+            if (choice == 0)
+            {
+                return "STRIKE FRONT";
+            }
+
+            if (choice == 1)
+            {
+                return "TURN LEFT";
+            }
+
+            return "BEHIND YOU";
+        }
+
+        private void UpdateFinaleHarvest()
+        {
+            if (!finaleThreatActive)
+            {
+                if (finaleNextThreatAt > 0f && StateTime >= finaleNextThreatAt)
                 {
-                    promptText.text = "TAP TO RISE";
-                }
-                else
-                {
-                    EchoId? unlocked = UnlockNextEcho();
-                    if (unlocked.HasValue)
+                    if (finaleThreatsRemaining <= 0)
                     {
-                        Audio.Play2D(Audio.EchoUnlockClip, 0.85f);
-                        Narrator(OMTKConfig.EchoName(unlocked.Value) + ". " + OMTKConfig.EchoHint(unlocked.Value), 2.25f);
-                        promptText.text = "TAP TO RISE";
+                        BeginFinaleClimax();
                     }
                     else
                     {
-                        promptText.text = "TAP TO RISE";
+                        finaleThreatIndex++;
+                        StartFinaleThreat();
                     }
                 }
+
+                return;
             }
 
-            if (!fatalReplayPlayed && StateTime >= 3.45f && fatalClip != null)
+            if (!finaleThreatCuePlayed && StateTime >= finaleThreatCueAt)
             {
-                fatalReplayPlayed = true;
-                Audio.PlayAt(fatalClip, fatalPosition, 0.85f, 0.62f, true);
-                if (currentDeathTutorial)
+                finaleThreatCuePlayed = true;
+                Audio.PlayAt(Audio.WindupConjurer, FinalePosition(finaleTrueBearing), 0.95f, 0.92f, false);
+                AudioClip decoyClip = fatalClip != null ? fatalClip : Audio.DecoyWindupClip;
+                Audio.PlayAt(decoyClip, FinalePosition(finaleDecoyBearing), 0.45f, 0.82f, false);
+                ShowSubtitle(DeceptiveFinalePrompt(), 0.95f);
+            }
+
+            promptText.text = StateTime >= finaleThreatWindowStart && StateTime <= finaleThreatWindowEnd ? "TAP" : "LISTEN";
+            if (StateTime >= finaleThreatDeadline && !finaleThreatResolved)
+            {
+                ResolveFinaleThreat(false, "The opening closes.");
+            }
+        }
+
+        private void ResolveFinaleThreat(bool success, string failure)
+        {
+            if (!finaleThreatActive || finaleThreatResolved)
+            {
+                return;
+            }
+
+            finaleThreatResolved = true;
+            finaleThreatActive = false;
+            if (success)
+            {
+                Audio.Play2D(Audio.PerfectClip, 0.85f, 1.05f);
+                PulseHaptic();
+                ShowSubtitle("Deflected. The source moves.", 0.9f);
+                finaleTrueBearing = Mathf.Repeat(finaleTrueBearing + 90f * finaleShiftDirection, 360f);
+                finaleShiftDirection *= -1;
+                finaleThreatsRemaining--;
+                finaleNextThreatAt = StateTime + 0.75f;
+            }
+            else
+            {
+                PenalizeFinale(failure);
+                if (State != GameState.Finale || finaleBeat != 2)
                 {
-                    ShowSubtitle("Turn toward the sound.", 1.25f);
-                    Audio.Speak("Turn toward the sound.");
+                    return;
+                }
+
+                finaleThreatsRemaining--;
+                finaleNextThreatAt = StateTime + 0.75f;
+            }
+        }
+
+        private void TryFinaleParry()
+        {
+            if (State != GameState.Finale || finaleEnding)
+            {
+                return;
+            }
+
+            if (finaleBeat == 3)
+            {
+                if (finaleFinalDefended)
+                {
+                    ShowSubtitle("Swipe toward the voice.", 0.8f);
+                    return;
+                }
+
+                if (StateTime < finaleFinalWindowStart || StateTime > finaleFinalWindowEnd)
+                {
+                    ShowSubtitle("Wait for the opening.", 0.75f);
+                    return;
+                }
+
+                float finalAngle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, finaleTrueBearing));
+                if (finalAngle > OMTKConfig.GlancingDeflectAngle)
+                {
+                    PenalizeFinale("Off-axis. The Conductor turns.");
+                    if (State == GameState.Finale && finaleBeat == 3)
+                    {
+                        ResetFinaleClimaxCue();
+                    }
+
+                    return;
+                }
+
+                finaleFinalDefended = true;
+                Audio.Play2D(Audio.PerfectClip, 0.9f, 1.05f);
+                PulseHaptic();
+                ShowSubtitle("Now. Swipe.", 1.1f);
+                promptText.text = "SWIPE";
+                return;
+            }
+
+            if (finaleBeat != 2 || !finaleThreatActive || finaleThreatResolved)
+            {
+                return;
+            }
+
+            if (StateTime < finaleThreatWindowStart)
+            {
+                ResolveFinaleThreat(false, "Too soon. The Conductor smiles.");
+                return;
+            }
+
+            float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, finaleTrueBearing));
+            if (angle > OMTKConfig.GlancingDeflectAngle)
+            {
+                ResolveFinaleThreat(false, "Off-axis. The source is elsewhere.");
+                return;
+            }
+
+            if (StateTime > finaleThreatWindowEnd)
+            {
+                ResolveFinaleThreat(false, "The opening closes.");
+                return;
+            }
+
+            ResolveFinaleThreat(true, string.Empty);
+        }
+
+        private void TryFinaleSwipe()
+        {
+            if (State != GameState.Finale || finaleEnding)
+            {
+                return;
+            }
+
+            if (finaleBeat == 1)
+            {
+                ShowSubtitle("Nothing to cut yet.", 0.75f);
+                return;
+            }
+
+            if (finaleBeat == 2 && finaleThreatActive && !finaleThreatResolved)
+            {
+                float trueAngle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, finaleTrueBearing));
+                float decoyAngle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, finaleDecoyBearing));
+                if (trueAngle > OMTKConfig.FinaleOffAxisAngle && decoyAngle <= OMTKConfig.StandardParryAngle)
+                {
+                    ResolveFinaleThreat(false, "You struck a decoy.");
+                }
+                else if (trueAngle > OMTKConfig.FinaleOffAxisAngle)
+                {
+                    ResolveFinaleThreat(false, "The blade finds only air.");
                 }
                 else
                 {
-                    ShowSubtitle("Remember this.", 1.2f);
+                    ResolveFinaleThreat(false, "The Conductor is not open.");
                 }
+
+                return;
             }
 
-            if (StateTime >= 4.8f)
+            if (finaleBeat != 3 || !finaleFinalDefended)
             {
-                Retry();
+                ShowSubtitle("Defend first.", 0.75f);
+                return;
             }
+
+            float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, finaleTrueBearing));
+            if (angle > OMTKConfig.FinaleFinalSwipeAngle)
+            {
+                Audio.Play2D(Audio.OffAxisClip, 0.55f);
+                ShowSubtitle("Wrong line. The Conductor laughs.", 1f);
+                PenalizeFinale("Wrong line.");
+                if (State == GameState.Finale && finaleBeat == 3)
+                {
+                    ResetFinaleClimaxCue();
+                }
+
+                return;
+            }
+
+            BeginVictorySequence();
+        }
+
+        private void BeginFinaleClimax()
+        {
+            finaleBeat = 3;
+            finaleThreatActive = false;
+            finaleFinalDefended = false;
+            finaleFinalCuePlayed = false;
+            finaleTrueBearing = 180f;
+            finaleBearing = 180f;
+            Audio.SetConductorBearing(180f);
+            finaleFinalCueAt = StateTime + 1f;
+            finaleFinalWindowStart = StateTime + OMTKConfig.FinaleThreatWindowDelay;
+            finaleFinalWindowEnd = finaleFinalWindowStart + OMTKConfig.FinaleThreatWindowDuration;
+            finaleFinalDeadline = StateTime + OMTKConfig.FinaleThreatDeadline;
+            Audio.PlayConductorSpatial("One last time.", 180f);
+            ShowSubtitle("The final harvest.", 1.1f);
+            promptText.text = "LISTEN";
+        }
+
+        private void UpdateFinaleClimax()
+        {
+            if (!finaleFinalCuePlayed && StateTime >= finaleFinalCueAt)
+            {
+                finaleFinalCuePlayed = true;
+                Audio.PlayAt(Audio.WindupConjurer, FinalePosition(finaleTrueBearing), 1f, 0.9f, false);
+                ShowSubtitle("Every echo at once.", 0.9f);
+            }
+
+            if (!finaleFinalDefended)
+            {
+                promptText.text = StateTime >= finaleFinalWindowStart && StateTime <= finaleFinalWindowEnd ? "TAP" : "LISTEN";
+            }
+
+            if (!finaleFinalDefended && StateTime >= finaleFinalDeadline)
+            {
+                PenalizeFinale("The final harvest breaks your guard.");
+                if (Hp > 0)
+                {
+                    ResetFinaleClimaxCue();
+                }
+            }
+        }
+
+        private void ResetFinaleClimaxCue()
+        {
+            finaleFinalDefended = false;
+            finaleFinalCuePlayed = false;
+            finaleFinalCueAt = StateTime + 0.8f;
+            finaleFinalWindowStart = StateTime + OMTKConfig.FinaleThreatWindowDelay;
+            finaleFinalWindowEnd = finaleFinalWindowStart + OMTKConfig.FinaleThreatWindowDuration;
+            finaleFinalDeadline = StateTime + OMTKConfig.FinaleThreatDeadline;
+        }
+
+        private void PenalizeFinale(string message)
+        {
+            if (finaleEnding)
+            {
+                return;
+            }
+
+            if (TryConsumeIronShield())
+            {
+                ShowSubtitle("Iron holds. Once.", 1f);
+                return;
+            }
+
+            Hp--;
+            damageFlash = 1f;
+            PulseHaptic();
+            Audio.Play2D(Audio.HitClip, 0.9f, 0.94f);
+            ShowSubtitle(message, 1.1f);
+            Audio.Speak(message);
+            if (Hp <= 0)
+            {
+                RestartFinaleAtOneHp();
+            }
+        }
+
+        private void RestartFinaleAtOneHp()
+        {
+            Hp = 1;
+            Audio.StopConductor();
+            Audio.Unduck();
+            Audio.StopVoice();
+            StartFinale();
+            ShowSubtitle("Not yet. Again.", 1.6f);
+            Audio.Speak("Not yet. Again.");
+        }
+
+        private void BeginVictorySequence()
+        {
+            if (finaleEnding)
+            {
+                return;
+            }
+
+            finaleEnding = true;
+            finaleThreatActive = false;
+            Audio.SilenceForVictory();
+            StartCoroutine(FinishVictorySequence());
+        }
+
+        private IEnumerator FinishVictorySequence()
+        {
+            yield return new WaitForSecondsRealtime(1.5f);
+            Audio.Play2D(Audio.SheatheClip, 0.85f);
+            yield return new WaitForSecondsRealtime(0.45f);
+            Victory();
+        }
+
+        private Vector3 FinalePosition(float bearing)
+        {
+            return Quaternion.Euler(0f, bearing, 0f) * Vector3.forward * 4f;
         }
 
         private void TryParry()
         {
-            if (State != GameState.Playing)
+            if (State != GameState.Playing || guardLockout > 0f)
             {
                 return;
             }
 
-            if (guardLockout > 0f)
-            {
-                return;
-            }
-
-            if (tutorialDeathActive && tutorialWindupStarted && token == tutorialKiller)
+            if (tutorialDeathActive && tutorialWindupStarted && primaryToken == tutorialKiller)
             {
                 Audio.Play2D(Audio.OffAxisClip, 0.35f);
                 ShowSubtitle("This blow cannot be stopped.", 1f);
                 return;
             }
 
-            if (token != null && token.IsWindingUp)
+            OMTKEnemy target = FindParryTarget(out bool targetWasOffbeat);
+            if (target != null)
             {
-                float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, token.Azimuth));
+                float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, target.Azimuth));
                 if (angle > OMTKConfig.GlancingDeflectAngle)
                 {
                     Audio.Play2D(Audio.OffAxisClip, 0.5f);
                     ShowSubtitle("Wide. Face the sound.", 0.9f);
                     promptText.text = "TURN";
+                    TriggerPrematureTap();
                     return;
                 }
 
-                if (token.WindupRemaining > OMTKConfig.StandardParryWindow)
+                if (target.WindupRemaining > OMTKConfig.StandardParryWindow)
                 {
                     TriggerPrematureTap();
+                    if (targetWasOffbeat)
+                    {
+                        target.Interrupt();
+                        target.CancelDecoy();
+                        offbeatToken = null;
+                    }
+
                     return;
                 }
 
@@ -689,14 +1500,28 @@ namespace OMTK
                 {
                     grade = ParryGrade.Glancing;
                 }
-                else if (angle <= PerfectParryAngle && token.WindupRemaining <= PerfectWindow && token.IsResonanceLocked)
+                else if (angle <= PerfectParryAngle && target.WindupRemaining <= PerfectWindow && target.IsResonanceLocked)
                 {
                     grade = ParryGrade.Perfect;
                 }
 
-                token.Parry(grade);
-                token = null;
-                float baseCooldown = narratorMode == 0 ? 1.3f : 0.9f;
+                target.Parry(grade);
+                if (targetWasOffbeat)
+                {
+                    offbeatToken = null;
+                }
+                else
+                {
+                    primaryToken = null;
+                    offbeatDelay = 0f;
+                }
+
+                if (grade == ParryGrade.Perfect)
+                {
+                    RecordPerfectMastery(target);
+                }
+
+                float baseCooldown = OMTKConfig.AttackCooldown;
                 windupCooldown = grade == ParryGrade.Standard
                     ? baseCooldown * OMTKConfig.StandardParryCooldownScale
                     : baseCooldown;
@@ -709,6 +1534,10 @@ namespace OMTK
                     ShowSubtitle("Now. Swipe.", 1.15f);
                     promptText.text = "SWIPE";
                     Audio.Speak("Perfect. Swipe.");
+                    if (!targetWasOffbeat)
+                    {
+                        TriggerOffbeatResponse(target);
+                    }
                 }
                 else if (grade == ParryGrade.Glancing)
                 {
@@ -750,6 +1579,310 @@ namespace OMTK
 
             Audio.Play2D(Audio.WhiffClip, 0.4f);
             ShowSubtitle("Nothing there.", 0.65f);
+        }
+
+        private OMTKEnemy FindParryTarget(out bool targetWasOffbeat)
+        {
+            targetWasOffbeat = false;
+            OMTKEnemy best = null;
+            float bestAngle = float.MaxValue;
+            bool bestWasOffbeat = false;
+            if (primaryToken != null && primaryToken.IsWindingUp)
+            {
+                best = primaryToken;
+                bestAngle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, best.Azimuth));
+            }
+
+            if (offbeatToken != null && offbeatToken != primaryToken && offbeatToken.IsWindingUp)
+            {
+                float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, offbeatToken.Azimuth));
+                if (best == null || angle < bestAngle - 0.1f)
+                {
+                    best = offbeatToken;
+                    bestAngle = angle;
+                    bestWasOffbeat = true;
+                }
+            }
+
+            targetWasOffbeat = bestWasOffbeat;
+            return best;
+        }
+
+        private void TriggerOffbeatResponse(OMTKEnemy source)
+        {
+            if (offbeatToken == null || offbeatToken == source || !offbeatToken.IsWindingUp)
+            {
+                return;
+            }
+
+            if (!timeDipActive)
+            {
+                timeDipActive = true;
+                timeDipRoutine = StartCoroutine(TimeDipRoutine());
+            }
+        }
+
+        private IEnumerator TimeDipRoutine()
+        {
+            Audio.Duck(0.62f);
+            Time.timeScale = OMTKConfig.OffbeatTimeScale;
+            yield return new WaitForSecondsRealtime(OMTKConfig.OffbeatTimeDipDuration);
+            Time.timeScale = 1f;
+            timeDipActive = false;
+            timeDipRoutine = null;
+            Audio.Unduck();
+        }
+
+        private void CancelTimeDip()
+        {
+            if (timeDipRoutine != null)
+            {
+                StopCoroutine(timeDipRoutine);
+                timeDipRoutine = null;
+            }
+
+            if (timeDipActive)
+            {
+                timeDipActive = false;
+                Time.timeScale = 1f;
+                Audio.Unduck();
+            }
+        }
+
+        private void StartDeath(OMTKEnemy killer)
+        {
+            fatalVariant = killer != null ? killer.Variant : EnemyVariant.Stalker;
+            fatalClip = killer != null ? killer.WindupClip : Audio.DeathClip;
+            fatalAzimuth = killer != null ? killer.Azimuth : Mathf.Repeat(PlayerYaw + 180f, 360f);
+            fatalPosition = killer != null ? killer.Position : Quaternion.Euler(0f, fatalAzimuth, 0f) * Vector3.forward * 2.3f;
+            currentDeathTutorial = tutorialDeathActive;
+            ClearEnemies();
+            SetState(GameState.Death);
+            Deaths++;
+            BestWave = Mathf.Max(BestWave, Wave);
+            deathNotePlayed = false;
+            deathResolved = false;
+            deathAligned = false;
+            deathCueActive = false;
+            deathNextCueAt = OMTKConfig.DeathCueFirstTime;
+            deathWindowStart = -1f;
+            deathWindowEnd = -1f;
+            deathRetryAt = 0f;
+            deathTapCount = 0;
+            deathTapDeadline = 0f;
+            waitForSpeech = false;
+            offeredBargain = NextEligibleBargain();
+            bargainOffered = offeredBargain >= 0;
+            bargainAccepted = false;
+            bargainRejected = false;
+            Audio.StopTinnitus();
+            Audio.SetTension(false);
+            Audio.Unduck();
+            Audio.Duck(0.24f);
+            SaveProgress();
+            ShowSubtitle("You died.", 1.1f);
+            promptText.text = "LISTEN";
+            Audio.Speak("You died. Trace the blow.");
+        }
+
+        private void UpdateDeath()
+        {
+            if (StateTime >= OMTKConfig.DeathNoteTime && !deathNotePlayed)
+            {
+                deathNotePlayed = true;
+                Audio.PlayAt(Audio.DeathClip, fatalPosition, 0.7f, OMTKConfig.DeathCuePitch, true);
+            }
+
+            if (deathResolved)
+            {
+                if (StateTime >= deathRetryAt)
+                {
+                    ClearDeathRehearsal();
+                    Retry();
+                }
+
+                return;
+            }
+
+            if (deathTapCount > 0 && StateTime > deathTapDeadline)
+            {
+                deathTapCount = 0;
+            }
+
+            float angle = Mathf.Abs(Mathf.DeltaAngle(PlayerYaw, fatalAzimuth));
+            deathAligned = angle <= OMTKConfig.DeathRehearsalAngle;
+
+            if (!deathCueActive && StateTime >= deathNextCueAt && StateTime < OMTKConfig.DeathFallbackDuration)
+            {
+                PlayDeathReplay();
+            }
+
+            if (deathCueActive)
+            {
+                if (StateTime < deathWindowStart)
+                {
+                    promptText.text = deathAligned ? "WAIT" : "TURN";
+                }
+                else if (StateTime <= deathWindowEnd)
+                {
+                    if (deathAligned)
+                    {
+                        promptText.text = "TAP";
+                        if (!bargainRejected && bargainOffered && offeredBargain >= 0)
+                        {
+                            bargainRejected = true;
+                            bargainOffered = false;
+                            ShowSubtitle("The echo waits. Tap to answer it.", 0.65f);
+                        }
+                    }
+                    else
+                    {
+                        promptText.text = "TURN";
+                    }
+                }
+                else
+                {
+                    deathCueActive = false;
+                    deathNextCueAt += OMTKConfig.DeathCueInterval;
+                    promptText.text = "LISTEN";
+                }
+            }
+
+            if (StateTime >= OMTKConfig.DeathFallbackDuration)
+            {
+                deathResolved = true;
+                deathCueActive = false;
+                deathRetryAt = Mathf.Min(StateTime + OMTKConfig.DeathSuccessDelay, 5f);
+                ShowSubtitle("The echo fades. Again.", 1.2f);
+                Audio.Speak("The echo fades. Again.");
+            }
+        }
+
+        private void PlayDeathReplay()
+        {
+            deathCueActive = true;
+            deathWindowStart = StateTime + OMTKConfig.DeathCueWindowDelay;
+            deathWindowEnd = deathWindowStart + OMTKConfig.DeathCueWindowDuration;
+            Audio.Duck(0.18f);
+            Audio.PlayAt(fatalClip != null ? fatalClip : Audio.DeathClip, fatalPosition, 1f, OMTKConfig.DeathCuePitch, true);
+            PulseHaptic();
+        }
+
+        private void TryDeathRehearsalTap()
+        {
+            if (State != GameState.Death || deathResolved)
+            {
+                return;
+            }
+
+            if (deathCueActive && StateTime >= deathWindowStart && StateTime <= deathWindowEnd)
+            {
+                if (deathAligned)
+                {
+                    FinishDeathRehearsal(true);
+                }
+                else
+                {
+                    if (bargainOffered && !bargainAccepted && deathTapCount > 0 && StateTime <= deathTapDeadline)
+                    {
+                        TryAcceptBargainBySwipe();
+                        return;
+                    }
+
+                    deathTapCount = 1;
+                    deathTapDeadline = StateTime + TwoFingerTapWindow;
+                    Audio.Play2D(Audio.OffAxisClip, 0.55f);
+                    ShowSubtitle("Not aligned. Trace the bearing.", 0.85f);
+                }
+
+                return;
+            }
+
+            if (bargainOffered && !bargainAccepted)
+            {
+                if (deathTapCount > 0 && StateTime <= deathTapDeadline)
+                {
+                    TryAcceptBargainBySwipe();
+                    return;
+                }
+
+                deathTapCount = 1;
+                deathTapDeadline = StateTime + TwoFingerTapWindow;
+                ShowSubtitle("Double-tap for the bargain.", 0.9f);
+                return;
+            }
+
+            Audio.Play2D(Audio.WhiffClip, 0.4f);
+            ShowSubtitle("Wait for the blow.", 0.7f);
+        }
+
+        private bool TryAcceptBargainBySwipe()
+        {
+            if (deathResolved || !TryAcceptBargain())
+            {
+                return false;
+            }
+
+            bargainRejected = false;
+            ShowSubtitle("Bargain taken. Now trace the blow.", 1.35f);
+            Audio.Speak("Bargain taken. Now trace the blow.");
+            return true;
+        }
+
+        private void FinishDeathRehearsal(bool success)
+        {
+            deathResolved = true;
+            deathCueActive = false;
+            if (success)
+            {
+                bargainRejected = true;
+                bargainOffered = false;
+                RecordCodexDiscovery(fatalVariant);
+                rehearsalBonusVariant = fatalVariant;
+                rehearsalBonusAttempt = Attempt;
+                SaveProgress();
+                deathRetryAt = Mathf.Min(StateTime + OMTKConfig.DeathSuccessDelay, 5f);
+                ShowSubtitle("You remembered. It will be slower.", 1.45f);
+                Audio.Play2D(Audio.EchoUnlockClip, 0.7f, 1.2f);
+                Audio.Speak("You remembered.");
+            }
+            else
+            {
+                deathRetryAt = Mathf.Min(StateTime + OMTKConfig.DeathSuccessDelay, 5f);
+                ShowSubtitle("The echo fades. Again.", 1.2f);
+                Audio.Speak("The echo fades. Again.");
+            }
+        }
+
+        private void SkipDeathRehearsal()
+        {
+            if (State != GameState.Death || deathResolved)
+            {
+                return;
+            }
+
+            deathResolved = true;
+            deathCueActive = false;
+            deathRetryAt = Mathf.Min(StateTime + OMTKConfig.DeathSuccessDelay, 5f);
+            ShowSubtitle("Rehearsal skipped.", 0.9f);
+            Audio.Speak("Rehearsal skipped.");
+        }
+
+        private void ClearDeathRehearsal()
+        {
+            deathCueActive = false;
+            deathResolved = false;
+            deathAligned = false;
+            deathNotePlayed = false;
+            deathRetryAt = 0f;
+            deathTapCount = 0;
+            deathTapDeadline = 0f;
+            offeredBargain = -1;
+            bargainOffered = false;
+            bargainAccepted = false;
+            bargainRejected = false;
+            deathWindowStart = -1f;
+            deathWindowEnd = -1f;
         }
 
         private void TriggerPrematureTap()
@@ -805,9 +1938,9 @@ namespace OMTK
                 return false;
             }
 
-            if (token == enemy)
+            if (primaryToken == enemy)
             {
-                token = null;
+                primaryToken = null;
             }
 
             windupCooldown = 0.82f;
@@ -851,6 +1984,9 @@ namespace OMTK
         {
             SetState(GameState.Victory);
             BestWave = 3;
+            ClearRunBargains();
+            rehearsalBonusVariant = null;
+            rehearsalBonusAttempt = 0;
             SaveProgress();
             Audio.StopConductor();
             Audio.Unduck();
@@ -861,7 +1997,7 @@ namespace OMTK
             titleText.text = "THE ECHO ENDS";
             titleText.gameObject.SetActive(true);
             promptText.text = "TAP TO BEGIN AGAIN";
-            Audio.Speak("You remembered.");
+            Audio.PlayConductorSpatial("You remembered.", 180f);
         }
 
         private void Spawn(EnemyVariant variant, float azimuth)
@@ -878,7 +2014,10 @@ namespace OMTK
             }
 
             enemies.Clear();
-            token = null;
+            primaryToken = null;
+            offbeatToken = null;
+            pendingToken = null;
+            offbeatDelay = 0f;
         }
 
         private void UpdateInput(float deltaTime)
@@ -912,6 +2051,11 @@ namespace OMTK
                     HandleSwipe();
                 }
 
+                if (keyboard.upArrowKey.wasPressedThisFrame)
+                {
+                    HandleSwipeUp();
+                }
+
                 if (keyboard.oKey.wasPressedThisFrame && State == GameState.Title)
                 {
                     ToggleOptions();
@@ -920,6 +2064,10 @@ namespace OMTK
                 if (keyboard.escapeKey.wasPressedThisFrame && optionsOpen)
                 {
                     ToggleOptions();
+                }
+                else if (keyboard.escapeKey.wasPressedThisFrame && State == GameState.Death)
+                {
+                    SkipDeathRehearsal();
                 }
 
                 if (keyboard.hKey.wasPressedThisFrame)
@@ -982,7 +2130,11 @@ namespace OMTK
                         twoFingerActive = false;
                         if (Time.unscaledTime - twoFingerDownAt <= TwoFingerMaxTapDuration)
                         {
-                            if (optionsOpen)
+                            if (State == GameState.Death)
+                            {
+                                SkipDeathRehearsal();
+                            }
+                            else if (optionsOpen)
                             {
                                 ToggleOptions();
                             }
@@ -1079,6 +2231,10 @@ namespace OMTK
                 if (pointerTravel < 18f && delta.magnitude < 45f && pointerDownTime < 0.42f)
                 {
                     HandleTap();
+                }
+                else if (delta.y > OMTKConfig.SwipeDistanceThreshold && Mathf.Abs(delta.x) < OMTKConfig.SwipeDistanceThreshold && pointerDownTime < 0.48f)
+                {
+                    HandleSwipeUp();
                 }
                 else if (Mathf.Abs(delta.x) > OMTKConfig.SwipeDistanceThreshold && Mathf.Abs(delta.y) < OMTKConfig.SwipeDistanceThreshold && pointerDownTime < 0.48f)
                 {
@@ -1213,9 +2369,13 @@ namespace OMTK
             {
                 ToggleRadar();
             }
-            else
+            else if (optionsIndex == 3)
             {
                 CycleVolume();
+            }
+            else
+            {
+                ResetProgress();
             }
         }
 
@@ -1294,13 +2454,14 @@ namespace OMTK
             string haptics = "HAPTICS: " + (hapticsEnabled ? "ON" : "OFF");
             string radar = "RADAR ASSIST: " + (OMTKConfig.RadarAssist ? "ON" : "OFF");
             string volume = "VOLUME: " + Mathf.RoundToInt(masterVolume * 100f) + "%";
-            string[] rows = { narrator, haptics, radar, volume };
+            string reset = "RESET PROGRESS";
+            string[] rows = { narrator, haptics, radar, volume, reset };
             for (int i = 0; i < rows.Length; i++)
             {
                 rows[i] = (i == optionsIndex ? "> " : "  ") + rows[i];
             }
 
-            return rows[0] + "\n" + rows[1] + "\n" + rows[2] + "\n" + rows[3] + "\nTAP: CHANGE   SWIPE: NEXT";
+            return rows[0] + "\n" + rows[1] + "\n" + rows[2] + "\n" + rows[3] + "\n" + rows[4] + "\nTAP: CHANGE   SWIPE: NEXT";
         }
 
         private string OptionsSpeech()
@@ -1325,7 +2486,12 @@ namespace OMTK
                 return "Radar assist " + (OMTKConfig.RadarAssist ? "on." : "off.") + ".";
             }
 
-            return "Volume " + Mathf.RoundToInt(masterVolume * 100f) + " percent.";
+            if (optionsIndex == 3)
+            {
+                return "Volume " + Mathf.RoundToInt(masterVolume * 100f) + " percent.";
+            }
+
+            return "Reset progress.";
         }
 
         private string NarratorName()
@@ -1402,11 +2568,11 @@ namespace OMTK
             }
             else if (State == GameState.Death && StateTime > 0.9f)
             {
-                Retry();
+                TryDeathRehearsalTap();
             }
             else if (State == GameState.Finale)
             {
-                TryFinale();
+                TryFinaleParry();
             }
             else if (State == GameState.Victory && StateTime > 0.6f)
             {
@@ -1445,9 +2611,13 @@ namespace OMTK
             {
                 TrySlash();
             }
+            else if (State == GameState.Death)
+            {
+                return;
+            }
             else if (State == GameState.Finale)
             {
-                TryFinale();
+                TryFinaleSwipe();
             }
             else if (State == GameState.Victory && StateTime > 0.6f)
             {
@@ -1455,21 +2625,17 @@ namespace OMTK
             }
         }
 
-        private void TryFinale()
+        private void HandleSwipeUp()
         {
-            if (!finaleFacing)
+            if (State == GameState.Death)
             {
-                Audio.Play2D(Audio.WhiffClip, 0.45f);
-                Narrator("Turn toward the voice.", 1.2f);
-                promptText.text = "TURN";
-                return;
+                TryAcceptBargainBySwipe();
             }
-
-            Victory();
         }
 
         private void SetState(GameState state)
         {
+            CancelTimeDip();
             State = state;
             StateTime = 0f;
             if (state == GameState.Playing)
@@ -1602,12 +2768,12 @@ namespace OMTK
             }
             else if (State == GameState.Finale)
             {
-                ShowRadarBlip(0, 180f, 4f, finaleFacing, new Color(1f, 0.58f, 0.32f), false);
+                bool winding = finaleThreatActive || (finaleBeat == 3 && !finaleFinalDefended);
+                ShowRadarBlip(0, finaleTrueBearing, 4f, winding, new Color(1f, 0.58f, 0.32f), false);
             }
             else if (State == GameState.Death && fatalClip != null)
             {
-                float fatalAzimuth = Mathf.Atan2(fatalPosition.x, fatalPosition.z) * Mathf.Rad2Deg;
-                ShowRadarBlip(0, fatalAzimuth, fatalPosition.magnitude, StateTime >= 3.45f, new Color(1f, 0.28f, 0.22f), false);
+                ShowRadarBlip(0, fatalAzimuth, fatalPosition.magnitude, deathCueActive, new Color(1f, 0.28f, 0.22f), false);
             }
 
             UpdateRadarAudio(deltaTime);
@@ -1615,34 +2781,38 @@ namespace OMTK
 
         private void SetRadarVisible(bool visible)
         {
-            if (radarDial == null || radarVisible == visible)
+            if (radarDial == null)
             {
                 return;
             }
 
+            bool changed = radarVisible != visible;
             radarVisible = visible;
-            radarDial.gameObject.SetActive(visible);
-            if (radarReadout != null)
+            if (changed)
             {
-                radarReadout.gameObject.SetActive(visible);
-            }
-
-            if (radarLabels != null)
-            {
-                for (int i = 0; i < radarLabels.Length; i++)
+                radarDial.gameObject.SetActive(visible);
+                if (radarReadout != null)
                 {
-                    if (radarLabels[i] != null)
+                    radarReadout.gameObject.SetActive(visible);
+                }
+
+                if (radarLabels != null)
+                {
+                    for (int i = 0; i < radarLabels.Length; i++)
                     {
-                        radarLabels[i].gameObject.SetActive(visible);
+                        if (radarLabels[i] != null)
+                        {
+                            radarLabels[i].gameObject.SetActive(visible);
+                        }
                     }
                 }
             }
 
-            if (radarBlipRoots != null)
+            if (!visible && radarBlipRoots != null)
             {
                 for (int i = 0; i < radarBlipRoots.Length; i++)
                 {
-                    if (radarBlipRoots[i] != null && !visible)
+                    if (radarBlipRoots[i] != null)
                     {
                         radarBlipRoots[i].gameObject.SetActive(false);
                     }
@@ -1660,6 +2830,12 @@ namespace OMTK
             radarPingTimer -= deltaTime;
             if (radarPingTimer > 0f)
             {
+                return;
+            }
+
+            if (Audio.IsSpeechActive)
+            {
+                radarPingTimer = 0.4f;
                 return;
             }
 
@@ -1810,9 +2986,13 @@ namespace OMTK
 
         private void LoadProgress()
         {
-            Deaths = PlayerPrefs.GetInt(DeathsKey, 0);
-            BestWave = PlayerPrefs.GetInt(BestWaveKey, 0);
-            EchoMask = 0;
+            Deaths = Mathf.Max(0, PlayerPrefs.GetInt(DeathsKey, 0));
+            BestWave = Mathf.Clamp(PlayerPrefs.GetInt(BestWaveKey, 0), 0, 3);
+            CodexMask = PlayerPrefs.GetInt(CodexKey, 0) & 7;
+            LearnedMask = PlayerPrefs.GetInt(LearnedKey, 0) & 7;
+            RunEchoMask = 0;
+            ConductorResonance = 0;
+            ironShieldAvailable = false;
             PlayerPrefs.DeleteKey(EchoKey);
             RecalculateMaxHp();
         }
@@ -1821,8 +3001,29 @@ namespace OMTK
         {
             PlayerPrefs.SetInt(DeathsKey, Deaths);
             PlayerPrefs.SetInt(BestWaveKey, BestWave);
-            PlayerPrefs.SetInt(EchoKey, EchoMask);
+            PlayerPrefs.SetInt(CodexKey, CodexMask);
+            PlayerPrefs.SetInt(LearnedKey, LearnedMask);
             PlayerPrefs.Save();
+        }
+
+        private void ResetProgress()
+        {
+            Deaths = 0;
+            BestWave = 0;
+            CodexMask = 0;
+            LearnedMask = 0;
+            ClearRunBargains();
+            rehearsalBonusVariant = null;
+            rehearsalBonusAttempt = 0;
+            PlayerPrefs.DeleteKey(EchoKey);
+            PlayerPrefs.DeleteKey(CodexKey);
+            PlayerPrefs.DeleteKey(LearnedKey);
+            PlayerPrefs.DeleteKey(BestWaveKey);
+            PlayerPrefs.DeleteKey(DeathsKey);
+            PlayerPrefs.Save();
+            ShowSubtitle("PROGRESS RESET", 1.4f);
+            Audio.Play2D(Audio.RecenterClip, 0.7f, 0.8f);
+            Audio.Speak("Progress reset.");
         }
 
         private EchoId? UnlockNextEcho()

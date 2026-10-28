@@ -46,6 +46,39 @@ namespace OMTK
         }
 
         public bool IsResonanceLocked { get; private set; }
+        public bool TrainingCuePlayed { get; private set; }
+
+        public float Attention
+        {
+            get { return attention; }
+        }
+
+        public float PresenceTempo
+        {
+            get
+            {
+                if (Variant != EnemyVariant.Charger)
+                {
+                    return 1f;
+                }
+
+                float near = OMTKConfig.ChargerNearDistance;
+                float far = OMTKConfig.ChargerFarDistance;
+                float distance = Mathf.Clamp(Distance, near, far);
+                float closeness = (far - distance) / (far - near);
+                return Mathf.Lerp(OMTKConfig.ChargerFarTempo, OMTKConfig.ChargerNearTempo, closeness);
+            }
+        }
+
+        public float DecoyAzimuth
+        {
+            get { return Mathf.Repeat(Azimuth + 90f * phantomSide, 360f); }
+        }
+
+        public bool DecoyActive
+        {
+            get { return phantom != null && phantom.isPlaying; }
+        }
 
         public float LockProgress
         {
@@ -67,16 +100,25 @@ namespace OMTK
         private readonly GameObject root;
         private readonly AudioSource source;
         private readonly AudioSource presence;
+        private readonly AudioSource phantom;
         private readonly AudioLowPassFilter sourceFilter;
         private readonly AudioLowPassFilter presenceFilter;
+        private readonly AudioLowPassFilter phantomFilter;
         private float baseAzimuth;
         private float phase;
         private float moveSpeed;
+        private float baseMoveSpeed;
         private float targetDistance;
         private float recoverRemaining;
         private bool foresightCue;
+        private bool runForesightCue;
         private float presenceTarget;
         private float lockProgress;
+        private float chargerPulseTimer;
+        private float attention = 1f;
+        private float attentionTarget = 1f;
+        private int phantomSide;
+        private bool phantomDecoy;
         private const float ApproachDistance = 2.35f;
 
         public OMTKEnemy(OMTKGame owner, OMTKAudio audioSystem, EnemyVariant variant, float azimuth, int index)
@@ -90,7 +132,9 @@ namespace OMTK
             phase = index * 1.73f;
             targetDistance = ApproachDistance;
             moveSpeed = variant == EnemyVariant.Charger ? 2.35f : variant == EnemyVariant.Conjurer ? 0.95f : 1.25f;
-            WindupDuration = (variant == EnemyVariant.Charger ? 0.65f : variant == EnemyVariant.Conjurer ? 0.95f : 0.85f) * owner.WindupScale;
+            baseMoveSpeed = moveSpeed;
+            phantomSide = index % 2 == 0 ? 1 : -1;
+            WindupDuration = (variant == EnemyVariant.Charger ? 0.65f : variant == EnemyVariant.Conjurer ? 0.95f : 0.85f) * owner.WindupScaleFor(variant);
             WindupClip = audio.Windup(variant);
             PresenceClip = audio.Presence(variant);
 
@@ -98,18 +142,31 @@ namespace OMTK
             root.transform.SetParent(owner.transform, false);
             source = CreateSource(root, "Attack", 1.2f, 12f);
             presence = CreateSource(root, "Presence", 1.5f, 10f);
+            phantom = CreateSource(root, "Phantom", 1.5f, 11f);
             sourceFilter = source.gameObject.AddComponent<AudioLowPassFilter>();
             presenceFilter = presence.gameObject.AddComponent<AudioLowPassFilter>();
+            phantomFilter = phantom.gameObject.AddComponent<AudioLowPassFilter>();
             sourceFilter.cutoffFrequency = 5000f;
             presenceFilter.cutoffFrequency = 5000f;
+            phantomFilter.cutoffFrequency = 5000f;
             sourceFilter.lowpassResonanceQ = 0.7f;
             presenceFilter.lowpassResonanceQ = 0.7f;
+            phantomFilter.lowpassResonanceQ = 0.7f;
 
-            presence.clip = PresenceClip;
-            presence.loop = true;
+            presence.clip = variant == EnemyVariant.Charger ? audio.ChargerPulseClip : PresenceClip;
+            presence.loop = variant != EnemyVariant.Charger;
             presence.volume = 0.24f;
-            presence.Play();
+            if (variant != EnemyVariant.Charger)
+            {
+                presence.Play();
+            }
+
             presenceTarget = 0.24f;
+            if (variant == EnemyVariant.Conjurer)
+            {
+                StartPhantomApproach();
+            }
+
             UpdateSpatial(0f);
         }
 
@@ -124,9 +181,9 @@ namespace OMTK
             {
                 if (Variant == EnemyVariant.Stalker)
                 {
-                    Azimuth = baseAzimuth + Mathf.Sin(Time.time * 0.55f + phase) * 24f;
+                    Azimuth = baseAzimuth + Mathf.Sin(Time.time * 0.55f + phase) * OMTKConfig.StalkerOscillation;
                 }
-                else if (Variant == EnemyVariant.Conjurer)
+                else if (Variant == EnemyVariant.Conjurer && !phantomDecoy)
                 {
                     Azimuth = baseAzimuth + Mathf.Sin(Time.time * 0.31f + phase) * 13f;
                 }
@@ -146,10 +203,16 @@ namespace OMTK
             else if (State == EnemyState.Windup)
             {
                 WindupRemaining -= deltaTime;
-                if (!foresightCue && game.HasEcho(EchoId.Foresight) && WindupRemaining <= perfectWindow)
+                if (!runForesightCue && WindupRemaining <= 0.4f && game.HasEcho(EchoId.Foresight))
+                {
+                    runForesightCue = true;
+                    audio.PlayAt(audio.ForesightClip, Position, 0.5f, 1.3f);
+                }
+
+                if (!foresightCue && WindupRemaining <= perfectWindow && game.TryTrainingChime(Variant, Position))
                 {
                     foresightCue = true;
-                    audio.PlayAt(audio.ForesightClip, Position, 0.7f);
+                    TrainingCuePlayed = true;
                 }
 
                 if (WindupRemaining <= 0f)
@@ -174,9 +237,114 @@ namespace OMTK
                 }
             }
 
+            attention = Mathf.MoveTowards(attention, attentionTarget, deltaTime * 2.8f);
+            UpdateChargerPulse(deltaTime);
+            UpdatePhantom(deltaTime);
             UpdateResonanceLock(deltaTime, playerYaw);
             presence.volume = Mathf.MoveTowards(presence.volume, presenceTarget, deltaTime * 2.4f);
             UpdateSpatial(playerYaw);
+        }
+
+        public void SetAttention(float value)
+        {
+            attentionTarget = Mathf.Clamp01(value);
+        }
+
+        public void SetApproachScale(float scale)
+        {
+            moveSpeed = baseMoveSpeed * Mathf.Max(0.5f, scale);
+        }
+
+        private void UpdateChargerPulse(float deltaTime)
+        {
+            if (Variant != EnemyVariant.Charger)
+            {
+                return;
+            }
+
+            chargerPulseTimer -= deltaTime;
+            if (chargerPulseTimer <= 0f)
+            {
+                chargerPulseTimer = 1f / Mathf.Max(0.1f, PresenceTempo);
+                if (presence != null && presence.clip != null)
+                {
+                    presence.Play();
+                }
+            }
+        }
+
+        private void UpdatePhantom(float deltaTime)
+        {
+            if (Variant != EnemyVariant.Conjurer || phantom == null)
+            {
+                return;
+            }
+
+            if (phantomDecoy && !phantom.isPlaying)
+            {
+                StopPhantom();
+            }
+
+            if (State == EnemyState.Approach && !phantomDecoy && !phantom.isPlaying)
+            {
+                StartPhantomApproach();
+            }
+            else if (State != EnemyState.Approach && !phantomDecoy)
+            {
+                phantom.Stop();
+            }
+
+            if (phantom.isPlaying)
+            {
+                phantom.transform.position = Quaternion.Euler(0f, DecoyAzimuth, 0f) * Vector3.forward * Distance;
+                phantomFilter.cutoffFrequency = Mathf.Lerp(1100f, 5000f, attention);
+            }
+        }
+
+        private void StartPhantomApproach()
+        {
+            if (phantom == null)
+            {
+                return;
+            }
+
+            phantomDecoy = false;
+            phantom.clip = audio.DecoyApproachClip;
+            phantom.loop = true;
+            phantom.volume = 0.13f;
+            if (!phantom.isPlaying)
+            {
+                phantom.Play();
+            }
+        }
+
+        public void CancelDecoy()
+        {
+            StopPhantom();
+        }
+
+        public void Interrupt()
+        {
+            if (State != EnemyState.Windup)
+            {
+                return;
+            }
+
+            source.Stop();
+            StopPhantom();
+            State = EnemyState.Recover;
+            recoverRemaining = 0.55f;
+            targetDistance = 7.4f;
+            presenceTarget = 0.2f;
+        }
+
+        private void StopPhantom()
+        {
+            phantomDecoy = false;
+            if (phantom != null)
+            {
+                phantom.Stop();
+            }
         }
 
         private void UpdateResonanceLock(float deltaTime, float playerYaw)
@@ -215,15 +383,35 @@ namespace OMTK
                 return false;
             }
 
+            StopPhantom();
             State = EnemyState.Windup;
             WindupDuration = duration;
             WindupRemaining = duration;
             foresightCue = true;
+            runForesightCue = true;
+            TrainingCuePlayed = false;
             source.clip = WindupClip;
             source.pitch = 1f;
             source.volume = 0.95f;
             source.Play();
             presenceTarget = 0.07f;
+            return true;
+        }
+
+        public bool BeginDecoyWindup()
+        {
+            if (Variant != EnemyVariant.Conjurer || State != EnemyState.Approach || Distance > 3.15f || phantom == null)
+            {
+                return false;
+            }
+
+            phantomDecoy = true;
+            phantom.Stop();
+            phantom.clip = audio.DecoyWindupClip;
+            phantom.loop = false;
+            phantom.volume = 0.52f;
+            phantom.transform.position = Quaternion.Euler(0f, DecoyAzimuth, 0f) * Vector3.forward * Distance;
+            phantom.Play();
             return true;
         }
 
@@ -234,9 +422,12 @@ namespace OMTK
                 return false;
             }
 
+            StopPhantom();
             State = EnemyState.Windup;
             WindupRemaining = WindupDuration;
             foresightCue = false;
+            runForesightCue = false;
+            TrainingCuePlayed = false;
             source.clip = WindupClip;
             source.pitch = 1f;
             source.volume = 0.95f;
@@ -262,11 +453,28 @@ namespace OMTK
             }
             else if (grade == ParryGrade.Glancing)
             {
-                State = EnemyState.Recover;
-                recoverRemaining = 0.34f;
-                targetDistance = 7.6f;
-                presenceTarget = 0.2f;
-                audio.PlayAt(audio.GlanceClip, Position, 0.72f);
+                if (Variant == EnemyVariant.Charger)
+                {
+                    State = EnemyState.Approach;
+                    Azimuth = Mathf.Repeat(Azimuth + 180f, 360f);
+                    baseAzimuth = Azimuth;
+                    Distance = OMTKConfig.ChargerOvershootDistance;
+                    targetDistance = ApproachDistance;
+                    moveSpeed = baseMoveSpeed * 1.15f;
+                    IsResonanceLocked = false;
+                    lockProgress = 0f;
+                    chargerPulseTimer = 0f;
+                    presenceTarget = 0.2f;
+                    audio.PlayAt(audio.GlanceClip, Position, 0.72f);
+                }
+                else
+                {
+                    State = EnemyState.Recover;
+                    recoverRemaining = 0.34f;
+                    targetDistance = 7.6f;
+                    presenceTarget = 0.2f;
+                    audio.PlayAt(audio.GlanceClip, Position, 0.72f);
+                }
             }
             else
             {
@@ -304,6 +512,7 @@ namespace OMTK
             State = EnemyState.Dead;
             source.Stop();
             presence.Stop();
+            StopPhantom();
             audio.PlayAt(audio.DeathClip, Position, 0.86f);
             Object.Destroy(root, 1.35f);
             return true;
@@ -320,6 +529,8 @@ namespace OMTK
             {
                 presence.Stop();
             }
+
+            StopPhantom();
         }
 
         public void Destroy()
@@ -336,6 +547,7 @@ namespace OMTK
             float relative = Mathf.Abs(Mathf.DeltaAngle(playerYaw, Azimuth));
             float front = 1f - Mathf.Clamp01(relative / 180f);
             float cutoff = Mathf.Lerp(720f, 5000f, front * front);
+            cutoff *= Mathf.Lerp(OMTKConfig.UnattendedCutoffScale, 1f, attention);
             sourceFilter.cutoffFrequency = cutoff;
             presenceFilter.cutoffFrequency = cutoff;
         }

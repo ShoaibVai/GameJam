@@ -7,6 +7,8 @@ namespace OMTK
     {
         public bool IsReady { get; private set; }
         public bool IsFailed { get; private set; }
+        public bool IsSpeaking { get; private set; }
+        private float speakingUntil;
 
 #if UNITY_ANDROID && !UNITY_EDITOR
         private sealed class OnInitListener : AndroidJavaProxy
@@ -64,6 +66,10 @@ namespace OMTK
 
         public void Tick()
         {
+            if (IsSpeaking && Time.unscaledTime >= speakingUntil)
+            {
+                IsSpeaking = false;
+            }
 #if UNITY_ANDROID && !UNITY_EDITOR
             if (IsReady || IsFailed || tts == null)
             {
@@ -140,6 +146,13 @@ namespace OMTK
                 using (AndroidJavaObject bundle = new AndroidJavaObject("android.os.Bundle"))
                 {
                     int result = tts.Call<int>("speak", text, 0, bundle, "omtk");
+                    if (result == 0)
+                    {
+                        int words = Mathf.Max(1, text.Split(' ').Length);
+                        speakingUntil = Time.unscaledTime + Mathf.Clamp(0.55f + words * 0.34f, 1f, 9f);
+                        IsSpeaking = true;
+                    }
+
                     return result == 0;
                 }
             }
@@ -155,6 +168,7 @@ namespace OMTK
 
         public void Stop()
         {
+            IsSpeaking = false;
 #if UNITY_ANDROID && !UNITY_EDITOR
             if (tts == null)
             {

@@ -151,3 +151,106 @@ This log records implementation work against the acoustic redesign specification
 - **Automated suite:** `-omtkPlaytestSuite` passed 56/56 checks covering parry grades, resonance lock, premature tap, shove/slash separation, radar privacy, calibration, tutorial death, progression invariants, recenter, volume, and accessibility gestures.
 - **Smoke run:** `-omtkPlaytest` completed Wave 3 and reached Victory at 3 HP in 16.4 seconds with exit code 0.
 - **Environment:** Linux x86_64 headless build. Device audio, haptics, and TTS remain unverified.
+
+## Tier 2 — Enemy Acoustic Ecology, Attention Management, and Encounter Variation
+
+- **Status:** Implemented; Tier 2 runtime suite passing.
+- **Behavior implemented:**
+  - Stalkers oscillate their approach azimuth through approximately ±32° and freeze that bearing the instant their real windup begins. The existing `170 Hz → 720 Hz` windup identity is unchanged.
+  - Charger presence pulse tempo now follows the deterministic distance curve: approximately `1.0 Hz` at `10 m`, rising linearly to `5.5 Hz` at `2.35 m`. The Charger pulse and windup identities are preserved.
+  - A glancing Charger deflect now moves it to approximately `4.5 m` at `Azimuth + 180°`, then starts a new approach from behind. Positional audio and combat state use the same bearing.
+  - Conjurers maintain a secondary phantom source at `Azimuth ± 90°` during approach. The phantom decoy windup starts `0.4 s` before the real windup and contains only the `980 Hz` upper-tone component; the real Conjurer tell is unchanged.
+  - Parrying toward the Conjurer decoy is rejected as an off-axis defense and triggers the Tinnitus lockout.
+  - The scheduler now tracks `primaryToken` and `offbeatToken` independently. On Wave 3 or Attempt 3+, a primary windup schedules an offbeat windup `0.55 s` later when a second enemy is at attack range.
+  - A perfect parry of the primary while the offbeat is winding applies a `0.4 s` dip to `Time.timeScale = 0.65`, plays a spatial ping from the offbeat, and pitches the Drone and Tension beds down. The time scale and pitch always restore on completion or state change.
+  - Enemy interruption, death, token cleanup, and state transitions clear or invalidate scheduled attacks; interrupted winding enemies recover instead of later striking without a token.
+  - With two active enemies, the unattended enemy's attack and presence low-pass cutoff is lowered toward `45%` of its attended clarity while its spatial bearing and identity remain intact. Clarity returns as the player turns toward it.
+  - Attempt 1 preserves the fixed `62°`, `-74°`, and `142° / -38°` onboarding bearings. Attempt 2+ uses per-enemy bearing jitter, enforces at least `85°` separation, adds Wave 2/Wave 3 pressure from Attempt 3, and scales approach speed gradually.
+  - One Conductor edit is selected from Attempt 2 onward: swap a wave enemy type, hasten the approach, or add an extra attacker. `Retry` narrates one short hint without revealing bearings or exact attack timing.
+  - Attack cooldown is standardized at `1.25 s`; wave-start cooldown is `1.8 s` after narration or startup speech finishes. The scheduler waits for `Audio.IsSpeechActive` to clear and does not wait indefinitely in OFF mode.
+  - The previously unused `AudioSynth.Tension()` layer now plays during Wave 3 and the Finale with a controlled volume crossfade; it is disabled on death, victory, retry, and early waves.
+- **Files changed:** `Assets/Scripts/OMTK/OMTKConfig.cs`, `Assets/Scripts/OMTK/AudioSynth.cs`, `Assets/Scripts/OMTK/OMTKAudio.cs`, `Assets/Scripts/OMTK/OMTKSystemTts.cs`, `Assets/Scripts/OMTK/OMTKEnemy.cs`, `Assets/Scripts/OMTK/OMTKGame.cs`, `Assets/Scripts/OMTK/OMTKPlaytest.cs`.
+- **Configuration added:**
+  - `StalkerOscillation = 32f`
+  - `ChargerFarDistance = 10f`, `ChargerNearDistance = 2.35f`
+  - `ChargerFarTempo = 1f`, `ChargerNearTempo = 5.5f`
+  - `ChargerOvershootDistance = 4.5f`
+  - `ConjurerDecoyLead = 0.4f`
+  - `OffbeatWindupDelay = 0.55f`
+  - `OffbeatTimeScale = 0.65f`, `OffbeatTimeDipDuration = 0.4f`
+  - `UnattendedCutoffScale = 0.45f`
+  - `AttackCooldown = 1.25f`, `WaveStartCooldown = 1.8f`
+  - `MinEnemySeparation = 85f`
+  - `StalkerBearingJitter = 32f`, `ChargerBearingJitter = 40f`, `ConjurerBearingJitter = 34f`
+- **Playtests:** Tier 2 adds 37 headless checks for Charger tempo, Stalker oscillation and windup lock, Charger overshoot, Conjurer decoy lifecycle and Tinnitus rejection, dual-token retention, time-dip start/restore, attention targets, fixed/randomized bearings, pair separation, Conductor edits, cooldown normalization, and Tension state.
+- **Build/test result:** Compile check and Linux build passed; the expanded runtime suite passed 93/93 checks; headless smoke run reached Victory at 3 HP in 17.4 seconds with exit code 0.
+- **Deviations/deferred work:** Perceived mix clarity under headphones, Android TTS timing, haptics, and the Android build remain unverified in this environment. The interactive death rehearsal and split progression remain Tier 3 work.
+
+## Tier 2 verification
+
+- **Status:** Passing.
+- **Automated suite:** `-omtkPlaytestSuite` passed 93/93 checks, including Tier 1 regression coverage and 37 Tier 2 checks.
+- **Smoke run:** `-omtkPlaytest` completed Wave 3 and reached Victory at 3 HP in 17.4 seconds with exit code 0.
+- **Build:** Linux x86_64 headless build passed, `137,918,972` bytes.
+- **Environment:** Linux headless. Device audio, haptics, and TTS remain unverified.
+
+## Tier 3 — Trace the Blow, Split Progression, and the Conductor Betrayal
+
+- **Status:** Implemented; Tier 3 runtime suite passing.
+- **Behavior implemented:**
+  - Split progression into permanent Codex/Learned masks and per-run bargain/resonance state. `EchoMask` is now a compatibility alias for Codex discovery; legacy Echo bonuses and `UnlockNextEcho()` remain retired. Maximum HP stays fixed at `3`.
+  - Added the Trace the Blow death rehearsal. The Conductor note lands at `1.05 s`; the fatal windup replays at `2.1 s` and every `1.8 s` afterward at `0.62x` pitch through a `1600 Hz` low-pass. The replay window opens `0.35 s` after each cue and lasts `0.35 s`; alignment tolerance is `25°`, fallback resolution is `4.8 s`, and the retry delay is bounded at `5 s`.
+  - A correctly aligned tap during a replay completes the rehearsal, records the fatal variant in the Codex, and awards one `0.85x` windup bonus for the next attempt. The bonus expires on the following attempt.
+  - A bargain can be accepted with a swipe up or a second tap, but acceptance does not skip the aligned tap and does not resolve death. A correctly timed aligned tap rejects the offered bargain. `Escape` or a two-finger tap skips the rehearsal for accessibility.
+  - Added three training-chime charges per attempt for discovered but unmastered enemies. Perfect parries without a training assist mark mastery and silence future chimes for that variant.
+  - Added run-scoped bargains: Grace widens perfect window/angle, Stillness slows enemy windups, Foresight adds an early chime, and Iron absorbs one hit. The run mask, resonance, bonuses, and shield clear on victory, retry, or a new run.
+  - Rebuilt the Finale as three beats: the Conductor speaks in front and drifts behind; the harvest alternates true and decoy bearings with deceptive prompts and strict windows; a final aligned defense must be followed by a swipe toward the true bearing. False prompts never move the true source.
+  - Off-axis, decoy, premature, and timeout responses damage HP through the shared Finale penalty path. HP reaching zero restarts only the Finale at `1 HP` with “Not yet. Again.” without leaving a stale threat resolving after the restart.
+  - Victory mutes Drone/Tension/Hum, waits `1.5 s`, plays the sheathe cue, waits `0.45 s`, then enters Victory. The final narrator line is spatial at `180°`; run bargains and resonance clear while Codex and mastery persist.
+  - Expanded the options menu to five rows and added `RESET PROGRESS`, clearing Codex, mastery, best wave, deaths, and legacy Echo keys.
+- **Files changed:** `Assets/Scripts/OMTK/OMTKConfig.cs`, `Assets/Scripts/OMTK/AudioSynth.cs`, `Assets/Scripts/OMTK/OMTKAudio.cs`, `Assets/Scripts/OMTK/OMTKEnemy.cs`, `Assets/Scripts/OMTK/OMTKGame.cs`, `Assets/Scripts/OMTK/OMTKPlaytest.cs`.
+- **Configuration added:**
+  - `DeathNoteTime = 1.05f`, `DeathCueFirstTime = 2.1f`, `DeathCueInterval = 1.8f`
+  - `DeathCuePitch = 0.62f`, `DeathCueLowPass = 1600f`
+  - `DeathRehearsalAngle = 25f`, `DeathCueWindowDelay = 0.35f`, `DeathCueWindowDuration = 0.35f`, `DeathFallbackDuration = 4.8f`
+  - `RehearsalWindupScale = 0.85f`, `TrainingChimeCharges = 3`
+  - `FinaleDriftStart = 1.4f`, `FinaleDriftDuration = 2.6f`
+  - `FinaleThreatDeadline = 4f`, `FinaleFinalSwipeAngle = 20f`, `FinaleOffAxisAngle = 45f`
+- **Playtests:** Tier 3 adds 55 headless checks for Codex/Learned persistence and reset, legacy compatibility, training-chime limits and mastery, run-only Grace effects, death cue/window/fallback/bounded retry, bargain acceptance without bypass, rehearsal Codex recording, spatial drift, resonance-scaled threats, false prompts, decoy/off-axis damage, Finale restart at `1 HP`, and final defense/victory cleanup. The suite now runs `148/148` checks.
+- **Build/test result:** Script recompile passed with no compile errors; Linux build passed with `0` errors and `974` known package/URP/shader warnings, `137,942,524` bytes. Headless suite `148/148`; headless smoke reached Victory at `3 HP` in `21.7 s` with exit code `0`. Android APK also built successfully with `0` errors and `979` known package/URP warnings, `43,337,105` bytes, debug-signed; it has not been installed because no device is connected.
+- **Deviations/deferred work:** Device listening, TTS timing, haptics, and Android build verification remain pending. The Finale smoke driver uses real-time waits and is intentionally slower than the former autoplay smoke.
+
+## Tier 3 verification
+
+- **Status:** Passing.
+- **Automated suite:** `-omtkPlaytestSuite` passed `148/148` checks, including Tier 1 and Tier 2 regressions and 55 Tier 3 checks.
+- **Smoke run:** `-omtkPlaytest` completed Wave 3, skipped the interactive death rehearsal once, and reached Victory at `3 HP` in `21.7 s` with exit code `0`.
+- **Build:** Linux x86_64 headless build passed, `137,942,524` bytes, `0` errors, `974` known warnings. Android ARM64 debug APK passed, `43,337,105` bytes, `0` errors, `979` known warnings. No device was connected for installation.
+- **Environment:** Linux headless. Device audio, haptics, TTS, and the Android build remain unverified.
+
+## Tier 4 — Automated Playtests, Build Verification, and Documentation
+
+- **Status:** Implemented; Tier 4 runtime suite passing.
+- **Behavior hardened:**
+  - Parry cooldown is now narrator-independent at the configured `1.25 s`; standard parries still receive the `0.7x` shortening. This removes the previous `0.9 s`/`1.3 s` mode-specific behavior that contradicted the design and increased cooldowns for TTS.
+  - Victory now clears the tension target immediately as well as stopping the tension source, so `TensionActive` is false as soon as the victory sequence begins.
+  - Radar blips are hidden even when assist is toggled off after a frame in which blips were already hidden, avoiding stale markers.
+- **Playtest coverage added:** 49 checks, for a total of `197/197`:
+  - Grace boundary at `25°` and rejection just outside it; standard parry cooldown at `0.7 × 1.25 s` in TTS, SYNTH, and OFF narrator modes; perfect cooldown remains `1.25 s`.
+  - Stalker closes during approach; Charger midpoint tempo is linear and rear recharge closes from the overshoot distance.
+  - Conjurer decoy timing (real windup at `0.4 s`, no premature launch), dual-token offbeat scheduling at `0.55 s`, decoy sub-bass omission and retained `980 Hz` tone via spectral check.
+  - Attempt-one onboarding bearings (wave 1 `150°`, wave 2 `-74°`), wave-start scheduling waits for narration in TTS/SYNTH modes, transition cleanup of attack tokens/time scale/audio filters/speech waits, radar blip and non-directional ring checks.
+  - Death fatal cue pitch `0.62`, `1600 Hz` low-pass, and fatal position; misaligned and mistimed rehearsal failures; recovery after failure; aligned rehearsal bargain rejection; repeated deaths do not inflate HP or grant run power; skipped rehearsal returns control within the bounded delay; reset clears deaths and best wave.
+  - Finale voice drift midpoint; explicit timeout damage; wrong final defense and wrong final swipe each cost HP and cannot win; recovery after a wrong swipe; victory clears tension and preserves Codex.
+- **Files changed:** `Assets/Scripts/OMTK/OMTKGame.cs`, `Assets/Scripts/OMTK/OMTKAudio.cs`, `Assets/Scripts/OMTK/OMTKPlaytest.cs`.
+- **Build/test result:** Script recompile passed; Linux build passed with `0` errors and `974` known package/URP/shader warnings, `137,115,660` bytes. Headless suite `197/197`; headless smoke reached Victory at `3 HP` in `31.01 s` with exit code `0`. Android APK rebuilt with `0` errors and `981` known warnings, `43,346,193` bytes, `131.2 s`, debug-signed; no device was connected for installation.
+- **Deviations/deferred work:** Device listening, gyro/touch latency, TTS timing, haptics, clean-state device behavior, release signing, and AAB packaging remain pending. The Unity AI/Sentis package still emits unrelated shader warnings. The Finale smoke uses real-time waits and is intentionally slower than the former autoplay.
+
+## Tier 4 verification
+
+- **Status:** Passing.
+- **Automated suite:** `-omtkPlaytestSuite` passed `197/197` checks.
+- **Smoke run:** `-omtkPlaytest` completed Wave 3, skipped the interactive death rehearsal once, and reached Victory at `3 HP` in `31.01 s` with exit code `0`.
+- **Linux build:** `build_31e1d5e36c33`, `0` errors, `974` known warnings, `137,115,660` bytes.
+- **Android build:** `build_842af1e8ceda`, APK `43,346,193` bytes, `0` errors, `981` known warnings, `131.2 s`, `versionCode=1`, `versionName=0.1.0`, `minSdk=31`, `targetSdk=36`, ARM64, debug-signed. Not installed; no device attached.
+- **Environment:** Linux headless. Device audio, haptics, TTS, gyro feel, and release packaging remain unverified.

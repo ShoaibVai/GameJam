@@ -70,6 +70,35 @@ namespace OMTK
             return Make("presence_" + variant, data);
         }
 
+        public static AudioClip ChargerPulse()
+        {
+            float[] data = Buffer(0.34f);
+            AddTone(data, 55f, 0f, 0.3f, 0.26f, Wave.Saw, 0.004f, 0.25f);
+            AddTone(data, 82.5f, 0f, 0.24f, 0.1f, Wave.Sine, 0.004f, 0.2f);
+            AddClick(data, 0f, 0.12f, 900f);
+            Normalize(data, 0.7f);
+            FadeEdges(data, 0.006f);
+            return Make("charger_pulse", data);
+        }
+
+        public static AudioClip DecoyWindup()
+        {
+            float[] data = Buffer(0.55f);
+            AddTone(data, 980f, 0f, 0.55f, 0.24f, Wave.Sine, 0.02f, 0.3f, 5.5f, 0.02f);
+            Normalize(data, 0.5f);
+            FadeEdges(data, 0.01f);
+            return Make("decoy_windup", data);
+        }
+
+        public static AudioClip DecoyApproach()
+        {
+            float[] data = Buffer(4f);
+            AddPulseTone(data, 980f, 4f, 0.028f, Wave.Sine, 0.3333333f);
+            AddPulseTone(data, 1960f, 4f, 0.008f, Wave.Sine, 0.3333333f);
+            Normalize(data, 0.45f);
+            return Make("decoy_approach", LoopCrossfade(data, 4f, 0.25f));
+        }
+
         public static AudioClip Drone()
         {
             float[] data = Buffer(17f);
@@ -274,6 +303,19 @@ namespace OMTK
             Normalize(data, 0.7f);
             FadeEdges(data, 0.01f);
             return Make("victory", data);
+        }
+
+        public static AudioClip Sheathe()
+        {
+            float[] data = Buffer(0.95f);
+            AddSweep(data, 2600f, 680f, 0f, 0.38f, 0.2f, Wave.Saw, 0.002f, 0.24f, 18f, 0.03f);
+            AddTone(data, 1320f, 0.18f, 0.4f, 0.1f, Wave.Sine, 0.004f, 0.34f);
+            AddTone(data, 880f, 0.24f, 0.5f, 0.07f, Wave.Sine, 0.006f, 0.42f);
+            AddFilteredNoise(data, 0.04f, 0.5f, 0.08f, 4200f, 0.3f);
+            AddFilteredNoise(data, 0.52f, 0.28f, 0.035f, 1800f, 0.2f);
+            Normalize(data, 0.74f);
+            FadeEdges(data, 0.008f);
+            return Make("sheathe", data);
         }
 
         public static AudioClip Tick()

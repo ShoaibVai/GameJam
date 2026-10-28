@@ -9,6 +9,8 @@ namespace OMTK
         private AudioSource voice;
         private AudioSource effects;
         private AudioSource conductor;
+        private AudioSource conductorVoice;
+        private AudioSource tension;
         private AudioSource tinnitus;
         private AudioSource calibration;
         private AudioLowPassFilter calibrationFilter;
@@ -16,8 +18,15 @@ namespace OMTK
         private AudioLowPassFilter voiceFilter;
         private AudioLowPassFilter effectsFilter;
         private AudioLowPassFilter conductorFilter;
+        private AudioLowPassFilter conductorVoiceFilter;
         private GameObject host;
+        private float conductorBearing;
+        private float conductorDistance = 4f;
         private float musicLevel = 0.2f;
+        private float tensionLevel;
+        private float tensionTarget;
+        private float dipPitch = 1f;
+        private float dipPitchTarget = 1f;
         private float duckCurrent = 1f;
         private float duckTarget = 1f;
         private float tinnitusRemaining;
@@ -32,6 +41,9 @@ namespace OMTK
         public AudioClip PresenceStalker { get; private set; }
         public AudioClip PresenceCharger { get; private set; }
         public AudioClip PresenceConjurer { get; private set; }
+        public AudioClip ChargerPulseClip { get; private set; }
+        public AudioClip DecoyWindupClip { get; private set; }
+        public AudioClip DecoyApproachClip { get; private set; }
         public AudioClip ParryClip { get; private set; }
         public AudioClip PerfectClip { get; private set; }
         public AudioClip ForesightClip { get; private set; }
@@ -43,6 +55,7 @@ namespace OMTK
         public AudioClip HeartbeatClip { get; private set; }
         public AudioClip EchoUnlockClip { get; private set; }
         public AudioClip VictoryClip { get; private set; }
+        public AudioClip SheatheClip { get; private set; }
         public AudioClip TickClip { get; private set; }
         public AudioClip ConductorReadyClip { get; private set; }
         public AudioClip RadarPingClip { get; private set; }
@@ -59,6 +72,7 @@ namespace OMTK
         {
             host = owner;
             music = CreateSource("Music", false);
+            tension = CreateSource("Tension", false);
             voice = CreateSource("Voice", false);
             effects = CreateSource("Effects", false);
             tinnitus = CreateSource("Tinnitus", false);
@@ -69,6 +83,10 @@ namespace OMTK
             music.loop = true;
             music.volume = musicLevel;
             music.Play();
+            tension.clip = AudioSynth.Tension();
+            tension.loop = true;
+            tension.volume = 0f;
+            tension.Play();
 
             WindupStalker = AudioSynth.Windup(EnemyVariant.Stalker);
             WindupCharger = AudioSynth.Windup(EnemyVariant.Charger);
@@ -76,6 +94,9 @@ namespace OMTK
             PresenceStalker = AudioSynth.Presence(EnemyVariant.Stalker);
             PresenceCharger = AudioSynth.Presence(EnemyVariant.Charger);
             PresenceConjurer = AudioSynth.Presence(EnemyVariant.Conjurer);
+            ChargerPulseClip = AudioSynth.ChargerPulse();
+            DecoyWindupClip = AudioSynth.DecoyWindup();
+            DecoyApproachClip = AudioSynth.DecoyApproach();
             ParryClip = AudioSynth.Parry();
             PerfectClip = AudioSynth.Perfect();
             ForesightClip = AudioSynth.Foresight();
@@ -87,6 +108,7 @@ namespace OMTK
             HeartbeatClip = AudioSynth.Heartbeat();
             EchoUnlockClip = AudioSynth.EchoUnlock();
             VictoryClip = AudioSynth.Victory();
+            SheatheClip = AudioSynth.Sheathe();
             TickClip = AudioSynth.Tick();
             ConductorReadyClip = AudioSynth.ConductorReady();
             RadarPingClip = AudioSynth.RadarPing();
@@ -167,6 +189,23 @@ namespace OMTK
                 music.volume = musicLevel * duckCurrent;
             }
 
+            tensionLevel = Mathf.MoveTowards(tensionLevel, tensionTarget, Time.unscaledDeltaTime * 0.35f);
+            if (tension != null)
+            {
+                tension.volume = tensionLevel * duckCurrent;
+            }
+
+            dipPitch = Mathf.MoveTowards(dipPitch, dipPitchTarget, Time.unscaledDeltaTime * 6f);
+            if (music != null)
+            {
+                music.pitch = dipPitch;
+            }
+
+            if (tension != null)
+            {
+                tension.pitch = dipPitch;
+            }
+
             if (tinnitusRemaining > 0f)
             {
                 tinnitusRemaining -= Time.unscaledDeltaTime;
@@ -212,6 +251,39 @@ namespace OMTK
             }
         }
 
+        public bool IsSpeechActive
+        {
+            get
+            {
+                if (voice != null && voice.isPlaying)
+                {
+                    return true;
+                }
+
+                return systemTts != null && systemTts.IsSpeaking;
+            }
+        }
+
+        public bool TensionActive
+        {
+            get { return tensionTarget > 0.01f; }
+        }
+
+        public void SetTension(bool active)
+        {
+            tensionTarget = active ? 0.16f : 0f;
+        }
+
+        public void StopTension()
+        {
+            tensionTarget = 0f;
+        }
+
+        public void SetTimeDip(bool active)
+        {
+            dipPitchTarget = active ? 0.8f : 1f;
+        }
+
         public void PlayMusic()
         {
             if (music != null && !music.isPlaying)
@@ -239,6 +311,11 @@ namespace OMTK
             if (narratorMode != 0 && systemTts != null)
             {
                 systemTts.Stop();
+            }
+
+            if (voice != null)
+            {
+                voice.Stop();
             }
         }
 
@@ -322,7 +399,7 @@ namespace OMTK
             if (lowPass)
             {
                 AudioLowPassFilter filter = go.AddComponent<AudioLowPassFilter>();
-                filter.cutoffFrequency = 1600f;
+                filter.cutoffFrequency = OMTKConfig.DeathCueLowPass;
             }
             source.PlayOneShot(clip);
             Object.Destroy(go, clip.length / Mathf.Max(0.01f, Mathf.Abs(source.pitch)) + 0.15f);
@@ -340,6 +417,8 @@ namespace OMTK
             GameObject go = new GameObject("Conductor");
             go.transform.SetParent(host.transform, false);
             go.transform.position = position;
+            conductorDistance = Mathf.Max(0.5f, position.magnitude);
+            conductorBearing = Mathf.Atan2(position.x, position.z) * Mathf.Rad2Deg;
             conductor = go.AddComponent<AudioSource>();
             conductor.playOnAwake = false;
             conductor.loop = true;
@@ -353,19 +432,107 @@ namespace OMTK
             conductorFilter = go.AddComponent<AudioLowPassFilter>();
             conductorFilter.cutoffFrequency = 700f;
             conductor.Play();
+            SetConductorBearing(conductorBearing);
+        }
+
+        public float ConductorBearing
+        {
+            get { return conductorBearing; }
+        }
+
+        public void SetConductorBearing(float bearing)
+        {
+            conductorBearing = Mathf.Repeat(bearing, 360f);
+            if (conductor != null)
+            {
+                conductor.transform.position = Quaternion.Euler(0f, conductorBearing, 0f) * Vector3.forward * conductorDistance;
+            }
+
+            if (conductorVoice != null)
+            {
+                conductorVoice.transform.position = Quaternion.Euler(0f, conductorBearing, 0f) * Vector3.forward * conductorDistance;
+            }
         }
 
         public void UpdateConductor(float playerYaw)
         {
+            UpdateConductor(playerYaw, conductorBearing);
+        }
+
+        public void UpdateConductor(float playerYaw, float bearing)
+        {
+            SetConductorBearing(bearing);
             if (conductor == null || conductorFilter == null)
             {
                 return;
             }
 
-            float angle = Mathf.Abs(Mathf.DeltaAngle(playerYaw, 180f));
+            float angle = Mathf.Abs(Mathf.DeltaAngle(playerYaw, conductorBearing));
             float facing = 1f - Mathf.Clamp01(angle / 180f);
             conductorFilter.cutoffFrequency = Mathf.Lerp(650f, 5000f, facing * facing);
             conductor.volume = Mathf.Lerp(0.12f, 0.85f, facing);
+            if (conductorVoiceFilter != null)
+            {
+                conductorVoiceFilter.cutoffFrequency = Mathf.Lerp(900f, 5000f, facing * facing);
+            }
+        }
+
+        public void PlayConductorSpatial(string text, float bearing)
+        {
+            if (string.IsNullOrEmpty(text) || narratorMode == 2 || AudioListener.volume <= 0.01f)
+            {
+                return;
+            }
+
+            if (conductorVoice == null)
+            {
+                GameObject go = new GameObject("Conductor Voice");
+                go.transform.SetParent(host.transform, false);
+                conductorVoice = go.AddComponent<AudioSource>();
+                conductorVoice.playOnAwake = false;
+                conductorVoice.spatialBlend = 1f;
+                conductorVoice.rolloffMode = AudioRolloffMode.Linear;
+                conductorVoice.minDistance = 1f;
+                conductorVoice.maxDistance = 16f;
+                conductorVoice.dopplerLevel = 0f;
+                conductorVoice.volume = 0.75f;
+                conductorVoiceFilter = go.AddComponent<AudioLowPassFilter>();
+                conductorVoiceFilter.cutoffFrequency = 5000f;
+            }
+
+            AudioClip clip;
+            if (!voiceCache.TryGetValue(text, out clip))
+            {
+                clip = AudioSynth.VoiceLine(text);
+                voiceCache[text] = clip;
+            }
+
+            conductorBearing = Mathf.Repeat(bearing, 360f);
+            conductorVoice.transform.position = Quaternion.Euler(0f, conductorBearing, 0f) * Vector3.forward * conductorDistance;
+            conductorVoice.Stop();
+            conductorVoice.clip = clip;
+            conductorVoice.Play();
+        }
+
+        public void SilenceForVictory()
+        {
+            StopVoice();
+            StopTension();
+            if (music != null)
+            {
+                music.volume = 0f;
+                music.Stop();
+            }
+
+            if (tension != null)
+            {
+                tension.volume = 0f;
+                tension.Stop();
+            }
+
+            StopTinnitus();
+            StopCalibration();
+            StopConductor();
         }
 
         public void StopConductor()
@@ -375,6 +542,13 @@ namespace OMTK
                 Object.Destroy(conductor.gameObject);
                 conductor = null;
                 conductorFilter = null;
+            }
+
+            if (conductorVoice != null)
+            {
+                Object.Destroy(conductorVoice.gameObject);
+                conductorVoice = null;
+                conductorVoiceFilter = null;
             }
         }
 

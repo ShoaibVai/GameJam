@@ -11,12 +11,22 @@ namespace OMTK
 
         private OMTKGame game;
         private FieldInfo tokenField;
+        private FieldInfo offbeatTokenField;
         private FieldInfo enemiesField;
-        private FieldInfo finaleFacingField;
+        private FieldInfo finaleBeatField;
+        private FieldInfo finaleTrueBearingField;
+        private FieldInfo finaleThreatActiveField;
+        private FieldInfo finaleThreatResolvedField;
+        private FieldInfo finaleThreatWindowStartField;
+        private FieldInfo finaleThreatWindowEndField;
+        private FieldInfo finaleFinalDefendedField;
+        private FieldInfo finaleFinalWindowStartField;
+        private FieldInfo finaleFinalWindowEndField;
         private FieldInfo playerYawField;
         private GameState lastState = (GameState)(-1);
         private OMTKEnemy lastToken;
         private bool finaleSwiped;
+        private bool deathSkipped;
         private bool finished;
         private bool suiteMode;
         private float runStartedAt;
@@ -33,9 +43,18 @@ namespace OMTK
                 return;
             }
 
-            tokenField = typeof(OMTKGame).GetField("token", Flags);
+            tokenField = typeof(OMTKGame).GetField("primaryToken", Flags);
+            offbeatTokenField = typeof(OMTKGame).GetField("offbeatToken", Flags);
             enemiesField = typeof(OMTKGame).GetField("enemies", Flags);
-            finaleFacingField = typeof(OMTKGame).GetField("finaleFacing", Flags);
+            finaleBeatField = typeof(OMTKGame).GetField("finaleBeat", Flags);
+            finaleTrueBearingField = typeof(OMTKGame).GetField("finaleTrueBearing", Flags);
+            finaleThreatActiveField = typeof(OMTKGame).GetField("finaleThreatActive", Flags);
+            finaleThreatResolvedField = typeof(OMTKGame).GetField("finaleThreatResolved", Flags);
+            finaleThreatWindowStartField = typeof(OMTKGame).GetField("finaleThreatWindowStart", Flags);
+            finaleThreatWindowEndField = typeof(OMTKGame).GetField("finaleThreatWindowEnd", Flags);
+            finaleFinalDefendedField = typeof(OMTKGame).GetField("finaleFinalDefended", Flags);
+            finaleFinalWindowStartField = typeof(OMTKGame).GetField("finaleFinalWindowStart", Flags);
+            finaleFinalWindowEndField = typeof(OMTKGame).GetField("finaleFinalWindowEnd", Flags);
             playerYawField = typeof(OMTKGame).GetField("<PlayerYaw>k__BackingField", Flags);
 
             string[] args = System.Environment.GetCommandLineArgs();
@@ -71,6 +90,11 @@ namespace OMTK
             if (game.State != lastState)
             {
                 lastState = game.State;
+                if (game.State != GameState.Death)
+                {
+                    deathSkipped = false;
+                }
+
                 Debug.Log("[PLAYTEST] state=" + game.State + " wave=" + game.Wave + " hp=" + game.Hp + "/" + game.MaxHp + " attempt=" + game.Attempt + " deaths=" + game.Deaths + " echoes=" + game.EchoMask);
             }
 
@@ -113,9 +137,11 @@ namespace OMTK
                     }
                     break;
                 case GameState.Death:
-                    if (game.StateTime > 1.2f)
+                    if (!deathSkipped && game.StateTime > 1.2f)
                     {
-                        Tap("retry");
+                        deathSkipped = true;
+                        Call("SkipDeathRehearsal");
+                        Debug.Log("[PLAYTEST] skip death rehearsal");
                     }
                     break;
                 case GameState.Finale:
@@ -146,6 +172,7 @@ namespace OMTK
 
             TestRecenterTransitions();
             TestPerfectAndGrades();
+            TestParryCooldowns();
             TestResonanceLock();
             yield return TestPrematureAndRecovery();
             TestShoveAndSlash();
@@ -154,6 +181,20 @@ namespace OMTK
             TestTutorialDeath();
             TestProgress();
             TestVolumeAndGestures();
+            TestTier2TempoAndClips();
+            TestStalkerOscillationAndLock();
+            TestChargerGlanceOvershoot();
+            TestConjurerDecoy();
+            yield return TestDualTokenTimeDip();
+            TestOffbeatTokenScheduling();
+            TestAttention();
+            TestBearingsAndConductor();
+            TestTensionAndCooldown();
+            TestNarratorScheduling();
+            TestTransitionCleanup();
+            TestTier3Progression();
+            TestTier3Death();
+            yield return TestTier3Finale();
 
             Time.timeScale = 1f;
             Debug.Log("[SUITE] RESULT passed=" + suitePassed + " failed=" + suiteFailed);
@@ -170,7 +211,10 @@ namespace OMTK
             game.Audio.SetNarratorMode(2);
             SetField("masterVolume", 1f);
             AudioListener.volume = 1f;
-            SetField("EchoMask", 0);
+            SetField("CodexMask", 0);
+            SetField("LearnedMask", 0);
+            SetField("RunEchoMask", 0);
+            SetField("ConductorResonance", 0);
             SetField("Deaths", 0);
             SetField("BestWave", 0);
             Call("RecalculateMaxHp");
@@ -181,7 +225,11 @@ namespace OMTK
             Call("SetState", GameState.Title);
             Call("ClearEnemies");
             Call("ClearTutorial");
-            SetField("token", null);
+            Call("ClearDeathRehearsal");
+            SetField("fatalClip", null);
+            SetField("primaryToken", null);
+            SetField("offbeatToken", null);
+            SetField("pendingToken", null);
             SetField("guardLockout", 0f);
         }
 
@@ -243,6 +291,51 @@ namespace OMTK
             Tap();
             Check("off-axis whiff beyond 40 degrees", enemy.IsWindingUp, enemy.State.ToString());
             ClearAll();
+
+            SetField("RunEchoMask", OMTKConfig.EchoBit(EchoId.Grace));
+            enemy = SetupEnemy(25f, 0.21f, true);
+            Tap();
+            Check("grace perfect at active angle boundary", enemy.IsStaggered, enemy.State.ToString());
+            ClearAll();
+
+            SetField("RunEchoMask", OMTKConfig.EchoBit(EchoId.Grace));
+            enemy = SetupEnemy(25.5f, 0.21f, true);
+            Tap();
+            Check("grace boundary rejects outside angle", enemy.State == EnemyState.Recover, enemy.State.ToString());
+            ClearAll();
+            SetField("RunEchoMask", 0);
+        }
+
+        private void TestParryCooldowns()
+        {
+            for (int mode = 0; mode <= 2; mode++)
+            {
+                SetupPlaying();
+                SetField("narratorMode", mode);
+                game.Audio.SetNarratorMode(mode);
+                OMTKEnemy enemy = AddEnemy(EnemyVariant.Stalker, 0f);
+                enemy.PlaceAtDistance(2.35f);
+                enemy.BeginScriptedWindup(0.2f);
+                SetField("primaryToken", enemy);
+                SetYaw(enemy.Azimuth);
+                SetEnemyLock(enemy, true);
+                Tap();
+                Check("standard cooldown mode " + mode, Near(GetFloat("windupCooldown"), OMTKConfig.AttackCooldown * OMTKConfig.StandardParryCooldownScale, 0.001f), GetFloat("windupCooldown").ToString("F3"));
+                ClearAll();
+            }
+
+            SetField("narratorMode", 2);
+            game.Audio.SetNarratorMode(2);
+            SetupPlaying();
+            OMTKEnemy perfect = AddEnemy(EnemyVariant.Stalker, 0f);
+            perfect.PlaceAtDistance(2.35f);
+            perfect.BeginScriptedWindup(0.14f);
+            SetField("primaryToken", perfect);
+            SetYaw(perfect.Azimuth);
+            SetEnemyLock(perfect, true);
+            Tap();
+            Check("perfect cooldown normalized", Near(GetFloat("windupCooldown"), OMTKConfig.AttackCooldown, 0.001f), GetFloat("windupCooldown").ToString("F3"));
+            ClearAll();
         }
 
         private void TestResonanceLock()
@@ -262,7 +355,7 @@ namespace OMTK
             SetYaw(enemy.Azimuth);
             enemy.Tick(0.31f, game.PlayerYaw, game.PerfectWindow);
             enemy.BeginScriptedWindup(0.14f);
-            SetField("token", enemy);
+            SetField("primaryToken", enemy);
             Tap();
             Check("locked perfect parry", enemy.IsStaggered, enemy.State.ToString());
             ClearAll();
@@ -274,7 +367,7 @@ namespace OMTK
             OMTKEnemy enemy = AddEnemy(EnemyVariant.Stalker, 0f);
             enemy.PlaceAtDistance(2.35f);
             enemy.BeginScriptedWindup(0.5f);
-            SetField("token", enemy);
+            SetField("primaryToken", enemy);
             SetYaw(enemy.Azimuth);
             SetField("guardLockout", 0f);
             Tap();
@@ -355,7 +448,21 @@ namespace OMTK
             Call("UpdateRadar", 0.016f);
             Check("radar hidden when off", dial != null && !dial.gameObject.activeSelf);
             Check("radar readout hidden when off", readout != null && !readout.gameObject.activeSelf);
-            Check("echo ring stays non-directional", echoRing != null && echoRing.gameObject.activeSelf);
+            Transform[] blips = GetField("radarBlipRoots") as Transform[];
+            bool blipsHidden = true;
+            if (blips != null)
+            {
+                for (int i = 0; i < blips.Length; i++)
+                {
+                    if (blips[i] != null && blips[i].gameObject.activeSelf)
+                    {
+                        blipsHidden = false;
+                    }
+                }
+            }
+
+            Check("radar blips hidden when off", blipsHidden);
+            Check("echo ring stays non-directional", echoRing != null && echoRing.gameObject.activeSelf && Quaternion.Angle(echoRing.rectTransform.localRotation, Quaternion.identity) < 0.1f);
 
             Call("ToggleRadar");
             Check("radar toggle persists on", OMTKConfig.RadarAssist && PlayerPrefs.GetInt("OMTK_RadarAssist", 0) == 1);
@@ -408,7 +515,7 @@ namespace OMTK
             Call("BeginWave", 1);
             Call("UpdateTutorialDeath", 3.1f);
             OMTKEnemy killer = GetField("tutorialKiller") as OMTKEnemy;
-            Check("tutorial windup starts", GetBool("tutorialWindupStarted") && killer != null && GetField("token") == killer);
+            Check("tutorial windup starts", GetBool("tutorialWindupStarted") && killer != null && GetField("primaryToken") == killer);
             int hp = game.Hp;
             if (killer != null)
             {
@@ -475,13 +582,604 @@ namespace OMTK
             AudioListener.volume = 1f;
         }
 
+        private void TestTier2TempoAndClips()
+        {
+            SetupPlaying();
+            OMTKEnemy charger = AddEnemy(EnemyVariant.Charger, 0f);
+            charger.PlaceAtDistance(OMTKConfig.ChargerNearDistance);
+            Check("charger near tempo", Near(charger.PresenceTempo, OMTKConfig.ChargerNearTempo, 0.05f), charger.PresenceTempo.ToString("F2"));
+            charger.PlaceAtDistance(OMTKConfig.ChargerFarDistance);
+            Check("charger far tempo", Near(charger.PresenceTempo, OMTKConfig.ChargerFarTempo, 0.05f), charger.PresenceTempo.ToString("F2"));
+            charger.PlaceAtDistance((OMTKConfig.ChargerNearDistance + OMTKConfig.ChargerFarDistance) * 0.5f);
+            Check("charger midpoint tempo linear", Near(charger.PresenceTempo, (OMTKConfig.ChargerNearTempo + OMTKConfig.ChargerFarTempo) * 0.5f, 0.05f), charger.PresenceTempo.ToString("F2"));
+            Check("charger pulse clip exists", game.Audio.ChargerPulseClip != null);
+            Check("decoy windup clip exists", game.Audio.DecoyWindupClip != null);
+            Check("decoy approach clip exists", game.Audio.DecoyApproachClip != null);
+            Check("charger overshoot distance config", Near(OMTKConfig.ChargerOvershootDistance, 4.5f));
+            Check("dual token threshold config", Near(OMTKConfig.MinEnemySeparation, 85f));
+            ClearAll();
+        }
+
+        private void TestStalkerOscillationAndLock()
+        {
+            SetupPlaying();
+            OMTKEnemy stalker = AddEnemy(EnemyVariant.Stalker, 100f);
+            stalker.PlaceAtDistance(9f);
+            float approachDistance = stalker.Distance;
+            SetEnemyField(stalker, "phase", -Time.time * 0.55f + Mathf.PI * 0.5f);
+            stalker.Tick(0.5f, 0f, game.PerfectWindow);
+            Check("stalker closes during approach", stalker.Distance < approachDistance, stalker.Distance.ToString("F2"));
+            float baseAzimuth = GetEnemyFloat(stalker, "baseAzimuth");
+            Check("stalker oscillates positive", Near(Mathf.DeltaAngle(baseAzimuth, stalker.Azimuth), OMTKConfig.StalkerOscillation, 0.5f), stalker.Azimuth.ToString("F2"));
+
+            SetEnemyField(stalker, "phase", -Time.time * 0.55f - Mathf.PI * 0.5f);
+            stalker.Tick(0f, 0f, game.PerfectWindow);
+            Check("stalker oscillates negative", Near(Mathf.DeltaAngle(baseAzimuth, stalker.Azimuth), -OMTKConfig.StalkerOscillation, 0.5f), stalker.Azimuth.ToString("F2"));
+
+            stalker.PlaceAtDistance(2.35f);
+            stalker.BeginWindup();
+            float lockedAzimuth = stalker.Azimuth;
+            SetEnemyField(stalker, "phase", -Time.time * 0.55f + Mathf.PI * 0.5f);
+            stalker.Tick(0.1f, 0f, game.PerfectWindow);
+            Check("stalker locks bearing during windup", Near(stalker.Azimuth, lockedAzimuth), stalker.Azimuth.ToString("F2"));
+            ClearAll();
+        }
+
+        private void TestChargerGlanceOvershoot()
+        {
+            SetupPlaying();
+            OMTKEnemy charger = AddEnemy(EnemyVariant.Charger, 0f);
+            charger.PlaceAtDistance(2.35f);
+            charger.BeginScriptedWindup(0.2f);
+            SetField("primaryToken", charger);
+            SetYaw(charger.Azimuth + 37f);
+            Tap();
+            Check("charger glancing enters approach", charger.State == EnemyState.Approach, charger.State.ToString());
+            Check("charger glancing overshoots distance", Near(charger.Distance, OMTKConfig.ChargerOvershootDistance), charger.Distance.ToString("F2"));
+            Check("charger glancing reverses bearing", Near(Mathf.Abs(Mathf.DeltaAngle(0f, charger.Azimuth)), 180f, 0.1f), charger.Azimuth.ToString("F2"));
+            Check("charger recharges from behind", charger.State == EnemyState.Approach && !charger.AtTarget, charger.State.ToString());
+            charger.Tick(0.25f, 0f, game.PerfectWindow);
+            Check("charger rear approach closes", charger.Distance < OMTKConfig.ChargerOvershootDistance, charger.Distance.ToString("F2"));
+            ClearAll();
+        }
+
+        private void TestConjurerDecoy()
+        {
+            SetupPlaying();
+            OMTKEnemy conjurer = AddEnemy(EnemyVariant.Conjurer, 0f);
+            conjurer.PlaceAtDistance(2.35f);
+            Call("QueueWindup", conjurer, false);
+            Check("conjurer starts decoy", GetField("pendingToken") == conjurer && conjurer.DecoyActive, conjurer.DecoyActive.ToString());
+            Check("conjurer decoy lead configured", Near(GetFloat("pendingLead"), OMTKConfig.ConjurerDecoyLead), GetFloat("pendingLead").ToString("F2"));
+            Check("conjurer decoy is off-axis", Near(Mathf.Abs(Mathf.DeltaAngle(conjurer.Azimuth, conjurer.DecoyAzimuth)), 90f, 0.1f), conjurer.DecoyAzimuth.ToString("F2"));
+            Call("UpdateTokenScheduler", OMTKConfig.ConjurerDecoyLead - 0.01f);
+            Check("conjurer decoy precedes real windup", GetField("primaryToken") == null && GetField("pendingToken") == conjurer && !conjurer.IsWindingUp);
+            Call("UpdateTokenScheduler", 0.02f);
+            Check("conjurer decoy launches real windup", GetField("primaryToken") == conjurer && conjurer.IsWindingUp, conjurer.State.ToString());
+            Check("conjurer decoy stops on real windup", !conjurer.DecoyActive);
+            if (game.Audio.WindupConjurer != null && game.Audio.DecoyWindupClip != null)
+            {
+                float realLow = MagnitudeAt(game.Audio.WindupConjurer, 68f) + MagnitudeAt(game.Audio.WindupConjurer, 136f);
+                float decoyLow = MagnitudeAt(game.Audio.DecoyWindupClip, 68f) + MagnitudeAt(game.Audio.DecoyWindupClip, 136f);
+                float decoyHigh = MagnitudeAt(game.Audio.DecoyWindupClip, 980f);
+                Check("conjurer decoy omits sub-bass", decoyLow < realLow * 0.2f, decoyLow.ToString("F4") + "/" + realLow.ToString("F4"));
+                Check("conjurer decoy keeps upper tone", decoyHigh > 0.01f, decoyHigh.ToString("F4"));
+            }
+
+            SetYaw(conjurer.Azimuth + 90f);
+            SetField("guardLockout", 0f);
+            Tap();
+            Check("conjurer decoy tap triggers tinnitus", GetFloat("guardLockout") > 0.4f, GetFloat("guardLockout").ToString("F2"));
+            game.Audio.StopTinnitus();
+            ClearAll();
+        }
+
+        private IEnumerator TestDualTokenTimeDip()
+        {
+            SetupPlaying();
+            SetField("Attempt", 3);
+            SetField("Wave", 3);
+            OMTKEnemy primary = AddEnemy(EnemyVariant.Stalker, 0f);
+            OMTKEnemy offbeat = AddEnemy(EnemyVariant.Stalker, 90f);
+            primary.PlaceAtDistance(2.35f);
+            offbeat.PlaceAtDistance(2.35f);
+            primary.BeginScriptedWindup(0.14f);
+            offbeat.BeginScriptedWindup(0.6f);
+            SetField("primaryToken", primary);
+            SetField("offbeatToken", offbeat);
+            SetEnemyLock(primary, true);
+            SetYaw(primary.Azimuth);
+            Tap();
+            Check("dual token primary perfect", primary.IsStaggered, primary.State.ToString());
+            Check("dual token offbeat retained", GetField("offbeatToken") == offbeat);
+            Check("offbeat time dip starts", GetBool("timeDipActive") && Near(Time.timeScale, OMTKConfig.OffbeatTimeScale, 0.001f), Time.timeScale.ToString("F2"));
+            yield return new WaitForSecondsRealtime(OMTKConfig.OffbeatTimeDipDuration + 0.15f);
+            Check("offbeat time dip restores", !GetBool("timeDipActive") && Near(Time.timeScale, 1f), Time.timeScale.ToString("F2"));
+            Time.timeScale = 0f;
+            ClearAll();
+        }
+
+        private void TestOffbeatTokenScheduling()
+        {
+            SetupPlaying();
+            SetField("Attempt", 3);
+            SetField("Wave", 3);
+            OMTKEnemy primary = AddEnemy(EnemyVariant.Stalker, 0f);
+            OMTKEnemy offbeat = AddEnemy(EnemyVariant.Stalker, 90f);
+            primary.PlaceAtDistance(2.35f);
+            offbeat.PlaceAtDistance(2.35f);
+            Call("LaunchWindup", primary, false);
+            Check("offbeat delay configured", Near(GetFloat("offbeatDelay"), OMTKConfig.OffbeatWindupDelay), GetFloat("offbeatDelay").ToString("F2"));
+            Call("UpdateTokenScheduler", OMTKConfig.OffbeatWindupDelay - 0.05f);
+            Check("offbeat waits for delay", Near(GetFloat("offbeatDelay"), 0.05f) && GetField("offbeatToken") == null, GetFloat("offbeatDelay").ToString("F2"));
+            Call("UpdateTokenScheduler", 0.06f);
+            Check("offbeat launches after delay", GetField("offbeatToken") == offbeat && offbeat.IsWindingUp, offbeat.State.ToString());
+            ClearAll();
+        }
+
+        private void TestAttention()
+        {
+            SetupPlaying();
+            OMTKEnemy attended = AddEnemy(EnemyVariant.Stalker, 0f);
+            OMTKEnemy unattended = AddEnemy(EnemyVariant.Stalker, 90f);
+            SetYaw(0f);
+            Call("UpdateAttention");
+            Check("attended enemy target", Near(GetEnemyFloat(attended, "attentionTarget"), 1f), GetEnemyFloat(attended, "attentionTarget").ToString("F2"));
+            Check("unattended enemy target", Near(GetEnemyFloat(unattended, "attentionTarget"), 0.35f), GetEnemyFloat(unattended, "attentionTarget").ToString("F2"));
+            attended.Tick(0.5f, 0f, game.PerfectWindow);
+            unattended.Tick(0.5f, 0f, game.PerfectWindow);
+            Check("attended clarity stays high", attended.Attention > 0.9f, attended.Attention.ToString("F2"));
+            Check("unattended clarity is low", unattended.Attention < 0.5f, unattended.Attention.ToString("F2"));
+            ClearAll();
+        }
+
+        private void TestBearingsAndConductor()
+        {
+            Call("StartRun");
+            SetField("Attempt", 1);
+            Call("BeginWave", 1);
+            IList onboarding = GetEnemies();
+            OMTKEnemy tutorial = onboarding != null && onboarding.Count > 0 ? onboarding[0] as OMTKEnemy : null;
+            Check("attempt one wave one killer bearing", tutorial != null && Near(tutorial.Azimuth, 150f, 0.1f), tutorial == null ? "missing" : tutorial.Azimuth.ToString("F1"));
+
+            Call("BeginWave", 2);
+            IList secondWave = GetEnemies();
+            OMTKEnemy charger = secondWave != null && secondWave.Count > 0 ? secondWave[0] as OMTKEnemy : null;
+            Check("attempt one wave two charger bearing", charger != null && charger.Variant == EnemyVariant.Charger && Near(charger.Azimuth, -74f, 0.1f), charger == null ? "missing" : charger.Azimuth.ToString("F1") + "/" + charger.Variant);
+
+            Call("BeginWave", 3);
+            IList pair = GetEnemies();
+            Check("fixed wave three pair", pair != null && pair.Count == 2, pair == null ? "no list" : pair.Count.ToString());
+            if (pair != null && pair.Count >= 2)
+            {
+                OMTKEnemy first = pair[0] as OMTKEnemy;
+                OMTKEnemy second = pair[1] as OMTKEnemy;
+                Check("fixed wave three bearings", first != null && second != null && Near(first.Azimuth, 142f, 0.1f) && Near(second.Azimuth, -38f, 0.1f), first == null || second == null ? "missing" : first.Azimuth.ToString("F1") + "/" + second.Azimuth.ToString("F1"));
+            }
+
+            ClearAll();
+            Call("StartRun");
+            SetField("Attempt", 3);
+            Call("BeginWave", 3);
+            IList trio = GetEnemies();
+            Check("attempt three adds voice", trio != null && trio.Count == 3, trio == null ? "no list" : trio.Count.ToString());
+            Check("attempt three pair separation", trio != null && trio.Count >= 2 && PairSeparationAtLeast(trio, OMTKConfig.MinEnemySeparation), trio == null ? "no list" : trio.Count.ToString());
+
+            Call("StartRun");
+            SetField("Attempt", 2);
+            Call("RollConductorEdit");
+            object edit = GetField("conductorEdit");
+            Check("conductor edit appears on retry", edit != null && System.Convert.ToInt32(edit) > 0, edit == null ? "none" : edit.ToString());
+            object hint = Call("ConductorHint");
+            Check("conductor edit has hint", hint is string && !string.IsNullOrEmpty((string)hint), hint == null ? "none" : hint.ToString());
+            ClearAll();
+        }
+
+        private void TestTensionAndCooldown()
+        {
+            Call("StartRun");
+            SetField("Attempt", 2);
+            Call("BeginWave", 1);
+            Check("tension off in early waves", !game.Audio.TensionActive, game.Audio.TensionActive.ToString());
+            Call("BeginWave", 3);
+            Check("tension on in wave three", game.Audio.TensionActive, game.Audio.TensionActive.ToString());
+            Call("BeginWave", 2);
+            Check("tension clears before wave three", !game.Audio.TensionActive, game.Audio.TensionActive.ToString());
+
+            SetupPlaying();
+            OMTKEnemy attacker = AddEnemy(EnemyVariant.Stalker, 0f);
+            SetField("windupCooldown", 0f);
+            int hp = game.Hp;
+            Call("EnemyAttack", attacker);
+            Check("attack cooldown normalized", Near(GetFloat("windupCooldown"), OMTKConfig.AttackCooldown), GetFloat("windupCooldown").ToString("F2"));
+            Check("attack consumes one heart", game.Hp == hp - 1, game.Hp + "/" + hp);
+            ClearAll();
+        }
+
+        private void TestNarratorScheduling()
+        {
+            SetupPlaying();
+            SetField("narratorMode", 1);
+            game.Audio.SetNarratorMode(1);
+            Call("BeginWave", 2);
+            OMTKEnemy target = AddEnemy(EnemyVariant.Stalker, 0f);
+            target.PlaceAtDistance(2.35f);
+            SetField("waitForSpeech", true);
+            game.Audio.Speak("Wave test narration.");
+            Check("wave narration is active", game.Audio.IsSpeechActive, game.Audio.IsSpeechActive.ToString());
+            Call("UpdateTokenScheduler", 3f);
+            Check("wave waits for narration", GetField("primaryToken") == null && GetBool("waitForSpeech"));
+
+            game.Audio.StopVoice();
+            Call("UpdateTokenScheduler", 0.01f);
+            Check("wave speech wait clears", !GetBool("waitForSpeech"), GetBool("waitForSpeech").ToString());
+            Call("UpdateTokenScheduler", OMTKConfig.WaveStartCooldown + 0.1f);
+            Check("wave launches after narration", GetField("primaryToken") == target, GetField("primaryToken") == null ? "none" : "other");
+            ClearAll();
+            SetField("narratorMode", 2);
+            game.Audio.SetNarratorMode(2);
+        }
+
+        private void TestTransitionCleanup()
+        {
+            SetupPlaying();
+            OMTKEnemy primary = AddEnemy(EnemyVariant.Stalker, 0f);
+            OMTKEnemy offbeat = AddEnemy(EnemyVariant.Stalker, 90f);
+            primary.PlaceAtDistance(2.35f);
+            offbeat.PlaceAtDistance(2.35f);
+            Call("LaunchWindup", primary, false);
+            SetField("offbeatToken", offbeat);
+            SetField("waitForSpeech", true);
+            SetField("timeDipActive", true);
+            Time.timeScale = OMTKConfig.OffbeatTimeScale;
+            game.Audio.PlayTinnitus();
+            Call("StartDeath", primary);
+            Check("transition clears attack tokens", GetField("primaryToken") == null && GetField("offbeatToken") == null, "tokens stuck");
+            Check("transition restores time scale", Near(Time.timeScale, 1f), Time.timeScale.ToString("F2"));
+            Check("transition restores audio filter", GetMusicCutoff() > 20000f, GetMusicCutoff().ToString("F0"));
+            Time.timeScale = 0f;
+            Call("Retry");
+            Check("retry clears pending speech", !GetBool("waitForSpeech"), GetBool("waitForSpeech").ToString());
+            ClearAll();
+        }
+
+        private void TestTier3Progression()
+        {
+            Call("StartRun");
+            SetField("Attempt", 2);
+            SetField("CodexMask", 0);
+            SetField("LearnedMask", 0);
+            Call("ResetTrainingChimes");
+            int bit = OMTKConfig.CodexBit(EnemyVariant.Stalker);
+            SetField("CodexMask", bit);
+            Check("codex bit exposed", game.CodexMask == bit, game.CodexMask.ToString());
+            Check("training chime first charge", game.TryTrainingChime(EnemyVariant.Stalker, Vector3.forward));
+            Check("training chime second charge", game.TryTrainingChime(EnemyVariant.Stalker, Vector3.forward));
+            Check("training chime third charge", game.TryTrainingChime(EnemyVariant.Stalker, Vector3.forward));
+            Check("training chime stops after charges", !game.TryTrainingChime(EnemyVariant.Stalker, Vector3.forward));
+            SetField("LearnedMask", bit);
+            Check("learned chime stops", !game.TryTrainingChime(EnemyVariant.Stalker, Vector3.forward));
+
+            Call("StartRun");
+            SetField("Attempt", 2);
+            SetField("CodexMask", bit);
+            SetField("LearnedMask", 0);
+            SetupPlaying();
+            OMTKEnemy enemy = AddEnemy(EnemyVariant.Stalker, 0f);
+            enemy.PlaceAtDistance(2.35f);
+            enemy.BeginScriptedWindup(0.3f);
+            SetField("primaryToken", enemy);
+            SetYaw(enemy.Azimuth);
+            Tap();
+            Check("standard parry does not master", (game.LearnedMask & bit) == 0, game.LearnedMask.ToString());
+
+            SetupPlaying();
+            enemy = AddEnemy(EnemyVariant.Stalker, 0f);
+            enemy.PlaceAtDistance(2.35f);
+            enemy.BeginScriptedWindup(0.14f);
+            SetField("primaryToken", enemy);
+            SetYaw(enemy.Azimuth);
+            SetEnemyLock(enemy, true);
+            Tap();
+            Check("perfect parry masters codex", (game.LearnedMask & bit) != 0, game.LearnedMask.ToString());
+            Check("learned chime remains silent", !game.TryTrainingChime(EnemyVariant.Stalker, Vector3.forward));
+
+            SetField("RunEchoMask", OMTKConfig.EchoBit(EchoId.Grace));
+            SetField("ConductorResonance", 2);
+            Check("run grace widens perfect window", Near(game.PerfectWindow, OMTKConfig.GracePerfectWindow), game.PerfectWindow.ToString("F3"));
+            Check("run grace widens perfect angle", Near(game.PerfectParryAngle, OMTKConfig.GracePerfectParryAngle), game.PerfectParryAngle.ToString("F2"));
+            SetField("RunEchoMask", 0);
+            Check("grace expires with run mask", Near(game.PerfectWindow, OMTKConfig.PerfectWindow), game.PerfectWindow.ToString("F3"));
+
+            SetField("CodexMask", 3);
+            SetField("LearnedMask", 1);
+            Call("SaveProgress");
+            SetField("CodexMask", 0);
+            SetField("LearnedMask", 0);
+            Call("LoadProgress");
+            Check("codex persists", (game.CodexMask & 3) == 3, game.CodexMask.ToString());
+            Check("mastery persists", (game.LearnedMask & 1) == 1, game.LearnedMask.ToString());
+            Check("codex does not change max hp", game.MaxHp == 3, game.MaxHp.ToString());
+
+            int deathsBefore = game.Deaths;
+            for (int i = 0; i < 3; i++)
+            {
+                SetupPlaying();
+                OMTKEnemy repeatKiller = AddEnemy(EnemyVariant.Stalker, 10f + i * 20f);
+                repeatKiller.PlaceAtDistance(2.35f);
+                Call("StartDeath", repeatKiller);
+                Call("Retry");
+            }
+
+            Check("repeated deaths do not inflate hp", game.MaxHp == 3 && Near(game.PerfectWindow, OMTKConfig.PerfectWindow), game.MaxHp + "/" + game.PerfectWindow.ToString("F3"));
+            Check("repeated deaths do not grant run power", game.RunEchoMask == 0 && game.ConductorResonance == 0, game.RunEchoMask + "/" + game.ConductorResonance);
+            Check("repeated deaths still count deaths", game.Deaths == deathsBefore + 3, game.Deaths + "/" + deathsBefore);
+
+            SetField("RunEchoMask", OMTKConfig.EchoBit(EchoId.Grace));
+            SetField("ConductorResonance", 2);
+            SetField("Deaths", 4);
+            SetField("BestWave", 3);
+            Call("ResetProgress");
+            Check("reset clears death stats", game.Deaths == 0 && game.BestWave == 0, game.Deaths + "/" + game.BestWave);
+            Check("reset clears codex", game.CodexMask == 0, game.CodexMask.ToString());
+            Check("reset clears mastery", game.LearnedMask == 0, game.LearnedMask.ToString());
+            Check("reset clears run mask", game.RunEchoMask == 0, game.RunEchoMask.ToString());
+            Check("reset clears resonance", game.ConductorResonance == 0, game.ConductorResonance.ToString());
+            ClearAll();
+        }
+
+        private void TestTier3Death()
+        {
+            Call("StartRun");
+            SetField("Attempt", 2);
+            SetupPlaying();
+            OMTKEnemy killer = AddEnemy(EnemyVariant.Charger, 123f);
+            killer.PlaceAtDistance(2.35f);
+            Vector3 fatalPosition = killer.Position;
+            Call("StartDeath", killer);
+            Check("death starts", game.State == GameState.Death, game.State.ToString());
+            Check("death tracks fatal azimuth", Near(GetFloat("fatalAzimuth"), 123f), GetFloat("fatalAzimuth").ToString("F1"));
+            Check("death tracks fatal clip", GetField("fatalClip") != null);
+            Check("death tracks fatal position", Vector3.Distance((Vector3)GetField("fatalPosition"), fatalPosition) < 0.01f);
+            Check("death defers resolution", !GetBool("deathResolved"));
+            Check("death offers bargain", GetBool("bargainOffered"));
+            Check("death bargain eligible", System.Convert.ToInt32(GetField("offeredBargain")) >= 0);
+
+            SetField("StateTime", OMTKConfig.DeathNoteTime + 0.01f);
+            Call("UpdateDeath");
+            SetField("StateTime", OMTKConfig.DeathCueFirstTime + 0.01f);
+            Call("UpdateDeath");
+            AudioSource cue = FindLowPassCue();
+            Check("death replay has spatial cue", cue != null);
+            if (cue != null)
+            {
+                Check("death replay pitch", Near(cue.pitch, OMTKConfig.DeathCuePitch), cue.pitch.ToString("F2"));
+                AudioLowPassFilter filter = cue.GetComponent<AudioLowPassFilter>();
+                Check("death replay low pass", filter != null && Near(filter.cutoffFrequency, OMTKConfig.DeathCueLowPass, 1f), filter == null ? "missing" : filter.cutoffFrequency.ToString("F0"));
+                Check("death replay at fatal position", Vector3.Distance(cue.transform.position, fatalPosition) < 0.1f, Vector3.Distance(cue.transform.position, fatalPosition).ToString("F2"));
+            }
+
+            bool accepted = System.Convert.ToBoolean(Call("TryAcceptBargainBySwipe"));
+            Check("bargain accepts", accepted);
+            Check("bargain updates run mask", (game.RunEchoMask & OMTKConfig.EchoBit(EchoId.Foresight)) != 0, game.RunEchoMask.ToString());
+            Check("bargain updates resonance", game.ConductorResonance == 1, game.ConductorResonance.ToString());
+            Check("bargain does not bypass rehearsal", !GetBool("deathResolved"));
+
+            SetYaw(GetFloat("fatalAzimuth"));
+            SetField("StateTime", OMTKConfig.DeathCueFirstTime + 0.01f);
+            Call("UpdateDeath");
+            float windowStart = GetFloat("deathWindowStart");
+            Check("death cue opens window", windowStart > 0f, windowStart.ToString("F2"));
+            SetField("StateTime", windowStart + 0.01f);
+            SetYaw(GetFloat("fatalAzimuth"));
+            Call("HandleTap");
+            Check("death rehearsal succeeds", GetBool("deathResolved"));
+            Check("death success records codex", (game.CodexMask & OMTKConfig.CodexBit(EnemyVariant.Charger)) != 0, game.CodexMask.ToString());
+            Check("death retry bounded", GetFloat("deathRetryAt") <= 5f, GetFloat("deathRetryAt").ToString("F2"));
+            Check("rehearsal bonus active", game.RehearsalBonusActive);
+            Call("Retry");
+            Check("rehearsal bonus expires next attempt", !game.RehearsalBonusActive);
+
+            Call("StartRun");
+            SetField("Attempt", 2);
+            SetupPlaying();
+            killer = AddEnemy(EnemyVariant.Stalker, 42f);
+            killer.PlaceAtDistance(2.35f);
+            Call("StartDeath", killer);
+            SetField("StateTime", OMTKConfig.DeathFallbackDuration + 0.01f);
+            Call("UpdateDeath");
+            Check("death fallback resolves", GetBool("deathResolved"));
+            Check("death fallback bounded", GetFloat("deathRetryAt") <= 5f, GetFloat("deathRetryAt").ToString("F2"));
+
+            Call("StartRun");
+            SetField("Attempt", 2);
+            SetupPlaying();
+            killer = AddEnemy(EnemyVariant.Conjurer, -64f);
+            killer.PlaceAtDistance(2.35f);
+            Call("StartDeath", killer);
+            SetField("bargainOffered", false);
+            SetYaw(GetFloat("fatalAzimuth"));
+            SetField("StateTime", 1f);
+            Call("HandleTap");
+            Check("death tap before cue does not resolve", !GetBool("deathResolved"));
+            SetField("StateTime", OMTKConfig.DeathCueFirstTime + 0.01f);
+            SetYaw(0f);
+            Call("UpdateDeath");
+            float failWindowStart = GetFloat("deathWindowStart");
+            SetField("StateTime", failWindowStart + 0.01f);
+            SetYaw(GetFloat("fatalAzimuth") + 50f);
+            Call("HandleTap");
+            Check("death misaligned rehearsal does not resolve", !GetBool("deathResolved"));
+            SetField("StateTime", failWindowStart + OMTKConfig.DeathCueWindowDuration + 0.01f);
+            SetYaw(GetFloat("fatalAzimuth"));
+            Call("HandleTap");
+            Check("death mistimed rehearsal does not resolve", !GetBool("deathResolved"));
+            SetField("StateTime", failWindowStart + 0.01f);
+            SetYaw(GetFloat("fatalAzimuth"));
+            Call("UpdateDeath");
+            Call("HandleTap");
+            Check("death rehearsal recovers after failure", GetBool("deathResolved"));
+
+            Call("StartRun");
+            SetField("Attempt", 2);
+            SetupPlaying();
+            killer = AddEnemy(EnemyVariant.Charger, 77f);
+            killer.PlaceAtDistance(2.35f);
+            Call("StartDeath", killer);
+            SetField("StateTime", OMTKConfig.DeathCueFirstTime + 0.01f);
+            SetYaw(0f);
+            Call("UpdateDeath");
+            SetField("StateTime", GetFloat("deathWindowStart") + 0.01f);
+            SetYaw(GetFloat("fatalAzimuth"));
+            Call("UpdateDeath");
+            Call("HandleTap");
+            Check("aligned rehearsal rejects bargain", GetBool("deathResolved") && GetBool("bargainRejected") && !GetBool("bargainOffered"));
+            Check("rehearsal rejection leaves run unpowered", game.RunEchoMask == 0 && game.ConductorResonance == 0, game.RunEchoMask + "/" + game.ConductorResonance);
+
+            Call("StartRun");
+            SetField("Attempt", 2);
+            SetupPlaying();
+            killer = AddEnemy(EnemyVariant.Stalker, 30f);
+            killer.PlaceAtDistance(2.35f);
+            Call("StartDeath", killer);
+            SetField("StateTime", 0.5f);
+            Call("SkipDeathRehearsal");
+            Check("death skip returns control", GetBool("deathResolved") && GetFloat("deathRetryAt") <= 5f, GetFloat("deathRetryAt").ToString("F2"));
+            ClearAll();
+        }
+
+        private IEnumerator TestTier3Finale()
+        {
+            Call("StartRun");
+            SetField("Attempt", 2);
+            SetField("ConductorResonance", 0);
+            Call("StartFinale");
+            SetField("StateTime", OMTKConfig.FinaleDriftStart + OMTKConfig.FinaleDriftDuration + 0.01f);
+            Call("UpdateFinale");
+            SetField("Hp", 2);
+            SetField("StateTime", GetFloat("finaleThreatDeadline") + 0.01f);
+            Call("UpdateFinale");
+            Check("finale timeout costs one hp", game.Hp == 1, game.Hp.ToString());
+
+            Call("StartRun");
+            SetField("Attempt", 2);
+            SetField("RunEchoMask", OMTKConfig.EchoBit(EchoId.Grace) | OMTKConfig.EchoBit(EchoId.Iron));
+            SetField("ConductorResonance", 2);
+            SetField("CodexMask", 3);
+            SetField("LearnedMask", 1);
+            Call("StartFinale");
+            Check("finale starts beat one", game.State == GameState.Finale && System.Convert.ToInt32(GetField("finaleBeat")) == 1);
+            SetField("StateTime", OMTKConfig.FinaleDriftStart + 0.05f);
+            Call("UpdateFinale");
+            Check("conductor starts in front", Near(game.Audio.ConductorBearing, 0f, 5f), game.Audio.ConductorBearing.ToString("F1"));
+            SetField("StateTime", OMTKConfig.FinaleDriftStart + OMTKConfig.FinaleDriftDuration * 0.5f);
+            Call("UpdateFinale");
+            Check("conductor drift midpoint", Near(game.Audio.ConductorBearing, 90f, 10f), game.Audio.ConductorBearing.ToString("F1"));
+            SetField("StateTime", OMTKConfig.FinaleDriftStart + OMTKConfig.FinaleDriftDuration + 0.01f);
+            Call("UpdateFinale");
+            Check("finale enters harvest", System.Convert.ToInt32(GetField("finaleBeat")) == 2);
+            Check("harvest uses resonance", System.Convert.ToInt32(GetField("finaleThreatsRemaining")) == 3, GetField("finaleThreatsRemaining").ToString());
+            Check("first true threat behind", Near(GetFloat("finaleTrueBearing"), 180f), GetFloat("finaleTrueBearing").ToString("F1"));
+            float trueBeforePrompt = GetFloat("finaleTrueBearing");
+            Call("DeceptiveFinalePrompt");
+            Check("false prompt does not move true bearing", Near(GetFloat("finaleTrueBearing"), trueBeforePrompt));
+
+            int hp = game.Hp;
+            SetYaw(GetFloat("finaleDecoyBearing"));
+            SetField("StateTime", GetFloat("finaleThreatWindowStart") + 0.01f);
+            Call("TryFinaleSwipe");
+            Check("decoy strike costs one hp", game.Hp == hp - 1, game.Hp + "/" + hp);
+
+            SetField("StateTime", GetFloat("finaleNextThreatAt") + 0.01f);
+            Call("UpdateFinale");
+            hp = game.Hp;
+            SetYaw(0f);
+            SetField("StateTime", GetFloat("finaleThreatWindowStart") + 0.01f);
+            Call("TryFinaleParry");
+            Check("off-axis finale parry costs one hp", game.Hp == hp - 1, game.Hp + "/" + hp);
+
+            SetField("StateTime", GetFloat("finaleNextThreatAt") + 0.01f);
+            Call("UpdateFinale");
+            SetField("Hp", 1);
+            SetField("StateTime", GetFloat("finaleThreatDeadline") + 0.01f);
+            Call("UpdateFinale");
+            Check("finale zero hp restarts finale", game.State == GameState.Finale && game.Hp == 1, game.State + "/" + game.Hp);
+            Check("finale restart returns to beat one", System.Convert.ToInt32(GetField("finaleBeat")) == 1, GetField("finaleBeat").ToString());
+
+            SetField("Hp", 3);
+            SetField("StateTime", 0f);
+            Call("BeginFinaleClimax");
+            SetField("StateTime", GetFloat("finaleFinalWindowStart") + 0.01f);
+            SetYaw(0f);
+            Call("TryFinaleParry");
+            Check("wrong final defense costs one hp", !GetBool("finaleFinalDefended") && game.Hp == 2, game.Hp.ToString());
+            SetField("StateTime", GetFloat("finaleFinalWindowStart") + 0.01f);
+            SetYaw(180f);
+            Call("TryFinaleParry");
+            Check("final defense accepts aligned tap", GetBool("finaleFinalDefended"));
+            SetYaw(0f);
+            Call("TryFinaleSwipe");
+            Check("wrong final swipe does not win", !GetBool("finaleEnding") && game.Hp == 1, game.Hp.ToString());
+            SetField("StateTime", GetFloat("finaleFinalWindowStart") + 0.01f);
+            SetYaw(180f);
+            Call("TryFinaleParry");
+            Check("final defense recovers after wrong swipe", GetBool("finaleFinalDefended"));
+            Call("TryFinaleSwipe");
+            Check("finale victory sequence begins", GetBool("finaleEnding"));
+            yield return new WaitForSecondsRealtime(2.2f);
+            Check("finale reaches victory", game.State == GameState.Victory, game.State.ToString());
+            Check("victory clears run mask", game.RunEchoMask == 0, game.RunEchoMask.ToString());
+            Check("victory clears resonance", game.ConductorResonance == 0, game.ConductorResonance.ToString());
+            Check("victory silences tension", !game.Audio.TensionActive, game.Audio.TensionActive.ToString());
+            Check("victory preserves codex", (game.CodexMask & 3) == 3, game.CodexMask.ToString());
+            Check("sheathe clip exists", game.Audio.SheatheClip != null);
+            ClearAll();
+        }
+
+        private IList GetEnemies()
+        {
+            return enemiesField == null ? null : enemiesField.GetValue(game) as IList;
+        }
+
+        private bool PairSeparationAtLeast(IList list, float minimum)
+        {
+            for (int i = 0; i < list.Count; i++)
+            {
+                OMTKEnemy first = list[i] as OMTKEnemy;
+                for (int j = i + 1; j < list.Count; j++)
+                {
+                    OMTKEnemy second = list[j] as OMTKEnemy;
+                    if (first != null && second != null && Mathf.Abs(Mathf.DeltaAngle(first.Azimuth, second.Azimuth)) < minimum)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private void SetEnemyField(OMTKEnemy enemy, string name, object value)
+        {
+            FieldInfo field = typeof(OMTKEnemy).GetField(name, Flags);
+            if (field == null)
+            {
+                field = typeof(OMTKEnemy).GetField("<" + name + ">k__BackingField", Flags);
+            }
+
+            if (field != null)
+            {
+                field.SetValue(enemy, value);
+            }
+        }
+
         private OMTKEnemy SetupEnemy(float angleOffset, float windup, bool locked)
         {
             SetupPlaying();
             OMTKEnemy enemy = AddEnemy(EnemyVariant.Stalker, 0f);
             enemy.PlaceAtDistance(2.35f);
             enemy.BeginScriptedWindup(windup);
-            SetField("token", enemy);
+            SetField("primaryToken", enemy);
             SetYaw(enemy.Azimuth + angleOffset);
             SetEnemyLock(enemy, locked);
             return enemy;
@@ -491,7 +1189,7 @@ namespace OMTK
         {
             Call("ClearEnemies");
             Call("ClearTutorial");
-            SetField("token", null);
+            SetField("primaryToken", null);
             SetField("guardLockout", 0f);
             SetField("Attempt", 2);
             SetField("Wave", 1);
@@ -503,8 +1201,14 @@ namespace OMTK
         {
             Call("ClearEnemies");
             Call("ClearTutorial");
-            SetField("token", null);
+            Call("ClearDeathRehearsal");
+            SetField("fatalClip", null);
+            SetField("primaryToken", null);
+            SetField("offbeatToken", null);
+            SetField("pendingToken", null);
+            SetField("offbeatDelay", 0f);
             SetField("guardLockout", 0f);
+            game.Audio.StopTinnitus();
             Call("SetState", GameState.Title);
         }
 
@@ -537,15 +1241,26 @@ namespace OMTK
             return filter == null ? 0f : filter.cutoffFrequency;
         }
 
-        private object GetField(string name)
+        private FieldInfo FindField(string name)
         {
             FieldInfo field = typeof(OMTKGame).GetField(name, Flags);
+            if (field == null)
+            {
+                field = typeof(OMTKGame).GetField("<" + name + ">k__BackingField", Flags);
+            }
+
+            return field;
+        }
+
+        private object GetField(string name)
+        {
+            FieldInfo field = FindField(name);
             return field == null ? null : field.GetValue(game);
         }
 
         private void SetField(string name, object value)
         {
-            FieldInfo field = typeof(OMTKGame).GetField(name, Flags);
+            FieldInfo field = FindField(name);
             if (field != null)
             {
                 field.SetValue(game, value);
@@ -590,6 +1305,53 @@ namespace OMTK
             }
         }
 
+        private static AudioSource FindLowPassCue()
+        {
+            AudioSource[] sources = Object.FindObjectsByType<AudioSource>(FindObjectsSortMode.None);
+            for (int i = 0; i < sources.Length; i++)
+            {
+                if (sources[i] != null && sources[i].gameObject.name == "SpatialCue" && sources[i].GetComponent<AudioLowPassFilter>() != null)
+                {
+                    return sources[i];
+                }
+            }
+
+            return null;
+        }
+
+        private static float MagnitudeAt(AudioClip clip, float frequency)
+        {
+            if (clip == null || clip.samples <= 0 || clip.channels <= 0)
+            {
+                return 0f;
+            }
+
+            float[] samples = new float[clip.samples * clip.channels];
+            if (!clip.GetData(samples, 0))
+            {
+                return 0f;
+            }
+
+            double real = 0.0;
+            double imaginary = 0.0;
+            int count = 0;
+            for (int i = 0; i < clip.samples; i++)
+            {
+                double phase = 2.0 * System.Math.PI * frequency * i / clip.frequency;
+                float sample = samples[i * clip.channels];
+                real += sample * System.Math.Cos(phase);
+                imaginary += sample * System.Math.Sin(phase);
+                count++;
+            }
+
+            if (count == 0)
+            {
+                return 0f;
+            }
+
+            return (float)(System.Math.Sqrt(real * real + imaginary * imaginary) / count);
+        }
+
         private static bool Near(float a, float b, float tolerance = 0.01f)
         {
             return Mathf.Abs(a - b) <= tolerance;
@@ -629,17 +1391,51 @@ namespace OMTK
 
         private void UpdateFinale()
         {
-            if (playerYawField != null)
+            int beat = finaleBeatField == null ? 0 : (int)finaleBeatField.GetValue(game);
+            float trueBearing = finaleTrueBearingField == null ? 180f : (float)finaleTrueBearingField.GetValue(game);
+            SetYaw(trueBearing);
+            if (beat == 3)
             {
-                playerYawField.SetValue(game, 180f);
+                bool defended = finaleFinalDefendedField != null && (bool)finaleFinalDefendedField.GetValue(game);
+                if (defended)
+                {
+                    if (!finaleSwiped)
+                    {
+                        finaleSwiped = true;
+                        Swipe();
+                        Debug.Log("[PLAYTEST] finale swipe");
+                    }
+
+                    return;
+                }
+
+                float start = finaleFinalWindowStartField == null ? 999f : (float)finaleFinalWindowStartField.GetValue(game);
+                float end = finaleFinalWindowEndField == null ? -1f : (float)finaleFinalWindowEndField.GetValue(game);
+                if (game.StateTime >= start && game.StateTime <= end)
+                {
+                    Tap("finale final defense");
+                }
+
+                return;
             }
 
-            bool facing = finaleFacingField != null && (bool)finaleFacingField.GetValue(game);
-            if (facing && !finaleSwiped)
+            if (beat != 2)
             {
-                finaleSwiped = true;
-                Swipe();
-                Debug.Log("[PLAYTEST] finale swipe");
+                return;
+            }
+
+            bool active = finaleThreatActiveField != null && (bool)finaleThreatActiveField.GetValue(game);
+            bool resolved = finaleThreatResolvedField != null && (bool)finaleThreatResolvedField.GetValue(game);
+            if (!active || resolved)
+            {
+                return;
+            }
+
+            float windowStart = finaleThreatWindowStartField == null ? 999f : (float)finaleThreatWindowStartField.GetValue(game);
+            float windowEnd = finaleThreatWindowEndField == null ? -1f : (float)finaleThreatWindowEndField.GetValue(game);
+            if (game.StateTime >= windowStart && game.StateTime <= windowEnd)
+            {
+                Tap("finale threat");
             }
         }
 
@@ -667,7 +1463,13 @@ namespace OMTK
 
         private OMTKEnemy GetToken()
         {
-            return tokenField == null ? null : tokenField.GetValue(game) as OMTKEnemy;
+            OMTKEnemy primary = tokenField == null ? null : tokenField.GetValue(game) as OMTKEnemy;
+            if (primary != null)
+            {
+                return primary;
+            }
+
+            return offbeatTokenField == null ? null : offbeatTokenField.GetValue(game) as OMTKEnemy;
         }
 
         private OMTKEnemy FindStaggered()

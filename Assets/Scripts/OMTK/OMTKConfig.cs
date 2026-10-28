@@ -50,6 +50,45 @@ namespace OMTK
         public const int BaseMaxHp = 3;
         public const float RunIntroDuration = 3.4f;
         public const float FinaleTurnWindow = 35f;
+        public const float DeathNoteTime = 1.05f;
+        public const float DeathCueFirstTime = 2.1f;
+        public const float DeathCueInterval = 1.8f;
+        public const float DeathCuePitch = 0.62f;
+        public const float DeathCueLowPass = 1600f;
+        public const float DeathRehearsalAngle = 25f;
+        public const float DeathCueWindowDelay = 0.35f;
+        public const float DeathCueWindowDuration = 0.35f;
+        public const float DeathFallbackDuration = 4.8f;
+        public const float DeathSuccessDelay = 0.55f;
+        public const float RehearsalWindupScale = 0.85f;
+        public const int TrainingChimeCharges = 3;
+        public const float FinaleDriftStart = 1.4f;
+        public const float FinaleDriftDuration = 2.6f;
+        public const float FinaleThreatDeadline = 4f;
+        public const float FinaleThreatLead = 0.9f;
+        public const float FinaleThreatWindowDelay = 1.25f;
+        public const float FinaleThreatWindowDuration = 0.35f;
+        public const float FinaleFinalSwipeAngle = 20f;
+        public const float FinaleOffAxisAngle = 45f;
+        public const float FinaleRestartDelay = 0.7f;
+
+        public const float StalkerOscillation = 32f;
+        public const float ChargerFarDistance = 10f;
+        public const float ChargerNearDistance = 2.35f;
+        public const float ChargerFarTempo = 1f;
+        public const float ChargerNearTempo = 5.5f;
+        public const float ChargerOvershootDistance = 4.5f;
+        public const float ConjurerDecoyLead = 0.4f;
+        public const float OffbeatWindupDelay = 0.55f;
+        public const float OffbeatTimeScale = 0.65f;
+        public const float OffbeatTimeDipDuration = 0.4f;
+        public const float UnattendedCutoffScale = 0.45f;
+        public const float AttackCooldown = 1.25f;
+        public const float WaveStartCooldown = 1.8f;
+        public const float MinEnemySeparation = 85f;
+        public const float StalkerBearingJitter = 32f;
+        public const float ChargerBearingJitter = 40f;
+        public const float ConjurerBearingJitter = 34f;
 
         public static readonly EchoId[] AllEchoes =
         {
@@ -96,6 +135,26 @@ namespace OMTK
         public static int EchoBit(EchoId id)
         {
             return 1 << (int)id;
+        }
+
+        public static int CodexBit(EnemyVariant variant)
+        {
+            return 1 << (int)variant;
+        }
+
+        public static string CodexName(EnemyVariant variant)
+        {
+            switch (variant)
+            {
+                case EnemyVariant.Stalker:
+                    return "Stalker";
+                case EnemyVariant.Charger:
+                    return "Charger";
+                case EnemyVariant.Conjurer:
+                    return "Conjurer";
+            }
+
+            return "Echo";
         }
 
         public static int RequiredDeaths(EchoId id)
